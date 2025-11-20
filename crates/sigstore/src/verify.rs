@@ -9,7 +9,7 @@ use sigstore_bundle::ValidationOptions;
 use sigstore_crypto::{verify_signature, Keyring, SignedNote, SigningScheme};
 use sigstore_trust_root::TrustedRoot;
 use sigstore_tsa::{verify_timestamp_response, VerifyOpts as TsaVerifyOpts};
-use sigstore_types::bundle::VerificationMaterialContent;
+use sigstore_types::bundle::{InclusionProof, VerificationMaterialContent};
 use sigstore_types::{Bundle, SignatureContent};
 use x509_cert::der::Decode;
 use x509_cert::Certificate;
@@ -894,29 +894,33 @@ impl Verifier {
                             ))
                         })?;
 
-                    let cert = Certificate::from_der(&bundle_cert_der_bytes)
-                        .map_err(|e| Error::Verification(format!("failed to parse certificate for time validation: {}", e)))?;
+                    // Only validate integrated time for hashedrekord 0.0.1
+                    // For 0.0.2 (Rekor v2), integrated_time is not present
+                    if entry.kind_version.version == "0.0.1" && !entry.integrated_time.is_empty() {
+                        let cert = Certificate::from_der(&bundle_cert_der_bytes)
+                            .map_err(|e| Error::Verification(format!("failed to parse certificate for time validation: {}", e)))?;
 
-                    // Convert certificate validity times to Unix timestamps
-                    use std::time::{SystemTime, UNIX_EPOCH};
-                    let not_before_system = cert.tbs_certificate.validity.not_before.to_system_time();
-                    let not_after_system = cert.tbs_certificate.validity.not_after.to_system_time();
+                        // Convert certificate validity times to Unix timestamps
+                        use std::time::{SystemTime, UNIX_EPOCH};
+                        let not_before_system = cert.tbs_certificate.validity.not_before.to_system_time();
+                        let not_after_system = cert.tbs_certificate.validity.not_after.to_system_time();
 
-                    let not_before = not_before_system.duration_since(UNIX_EPOCH)
-                        .map_err(|e| Error::Verification(format!("failed to convert notBefore to Unix time: {}", e)))?
-                        .as_secs() as i64;
-                    let not_after = not_after_system.duration_since(UNIX_EPOCH)
-                        .map_err(|e| Error::Verification(format!("failed to convert notAfter to Unix time: {}", e)))?
-                        .as_secs() as i64;
+                        let not_before = not_before_system.duration_since(UNIX_EPOCH)
+                            .map_err(|e| Error::Verification(format!("failed to convert notBefore to Unix time: {}", e)))?
+                            .as_secs() as i64;
+                        let not_after = not_after_system.duration_since(UNIX_EPOCH)
+                            .map_err(|e| Error::Verification(format!("failed to convert notAfter to Unix time: {}", e)))?
+                            .as_secs() as i64;
 
-                    let integrated_time = entry.integrated_time.parse::<i64>()
-                        .map_err(|e| Error::Verification(format!("failed to parse integrated time: {}", e)))?;
+                        let integrated_time = entry.integrated_time.parse::<i64>()
+                            .map_err(|e| Error::Verification(format!("failed to parse integrated time: {}", e)))?;
 
-                    if integrated_time < not_before || integrated_time > not_after {
-                        return Err(Error::Verification(
-                            format!("integrated time {} is outside certificate validity period ({} to {})",
-                                integrated_time, not_before, not_after)
-                        ));
+                        if integrated_time < not_before || integrated_time > not_after {
+                            return Err(Error::Verification(
+                                format!("integrated time {} is outside certificate validity period ({} to {})",
+                                    integrated_time, not_before, not_after)
+                            ));
+                        }
                     }
                 }
             }
@@ -977,7 +981,7 @@ impl Verifier {
                 // 7a. Verify checkpoint signature if present and we have a trusted root
                 if let Some(ref inclusion_proof) = entry.inclusion_proof {
                     if let Some(ref trusted_root) = self.trusted_root {
-                        verify_checkpoint(&inclusion_proof.checkpoint.envelope, trusted_root)?;
+                        verify_checkpoint(&inclusion_proof.checkpoint.envelope, inclusion_proof, trusted_root)?;
                     }
                 }
 
@@ -1149,24 +1153,23 @@ fn extract_tsa_timestamp(
                 }
             }
 
+            // Get TSA validity period from trusted root
+            // We need to get the first TSA's validity period and pass it to verification
+            if let Ok(tsa_certs) = root.tsa_certs_with_validity() {
+                if let Some((_cert, Some(start), Some(end))) = tsa_certs.first() {
+                    opts = opts.with_tsa_validity(*start, *end);
+                }
+            }
+
             // Verify the timestamp response with full cryptographic validation
             // STRICT MODE: When we have a trusted root, verification failures must fail the entire verification
+            // The TSA validity check is now done inside verify_timestamp_response
             let result =
                 verify_timestamp_response(&ts_bytes, signature_bytes, opts).map_err(|e| {
                     Error::Verification(format!("TSA timestamp verification failed: {}", e))
                 })?;
 
             let timestamp = result.time.timestamp();
-
-            // Check against TSA validity period from trusted root
-            if let Ok(Some((start, end))) = root.tsa_validity_for_time(result.time) {
-                if result.time < start || result.time > end {
-                    return Err(Error::Verification(format!(
-                        "TSA timestamp {} is outside trusted root validity period ({} to {})",
-                        result.time, start, end
-                    )));
-                }
-            }
 
             any_timestamp_verified = true;
 
@@ -1218,12 +1221,29 @@ fn extract_tsa_timestamp(
 /// This verifies the signed note format checkpoint against a Rekor public key
 /// from the trusted root. The key hint in the checkpoint signature is used to
 /// find the matching key from the trusted root.
-fn verify_checkpoint(checkpoint_envelope: &str, trusted_root: &TrustedRoot) -> Result<()> {
+/// It also verifies that the checkpoint's root hash matches the inclusion proof.
+fn verify_checkpoint(checkpoint_envelope: &str, inclusion_proof: &InclusionProof, trusted_root: &TrustedRoot) -> Result<()> {
     use sigstore_crypto::checkpoint::{verify_ecdsa_p256, verify_ed25519};
 
     // Parse the signed note
     let signed_note = SignedNote::from_text(checkpoint_envelope)
         .map_err(|e| Error::Verification(format!("Failed to parse checkpoint: {}", e)))?;
+
+    // Verify that the checkpoint's root hash matches the inclusion proof's root hash
+    let checkpoint_root_hash = &signed_note.checkpoint.root_hash;
+    let proof_root_hash_b64 = &inclusion_proof.root_hash;
+
+    // Decode the base64-encoded root hash from the inclusion proof
+    let proof_root_hash = base64::engine::general_purpose::STANDARD
+        .decode(proof_root_hash_b64)
+        .map_err(|e| Error::Verification(format!("Failed to decode inclusion proof root hash: {}", e)))?;
+
+    if checkpoint_root_hash != &proof_root_hash {
+        return Err(Error::Verification(
+            format!("Checkpoint root hash mismatch: checkpoint has {} bytes, inclusion proof has {} bytes",
+                checkpoint_root_hash.len(), proof_root_hash.len())
+        ));
+    }
 
     // Get all Rekor keys with their key hints from trusted root
     let rekor_keys = trusted_root
