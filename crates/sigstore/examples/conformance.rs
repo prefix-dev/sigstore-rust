@@ -115,9 +115,9 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
     // Read artifact
     let artifact_data = fs::read(&artifact_path)?;
 
-    // Parse identity token to extract email
+    // Parse identity token to extract email or subject
     let token_info = parse_identity_token(&identity_token)?;
-    let email = token_info.email().ok_or("No email in identity token")?;
+    let subject = token_info.email().unwrap_or(token_info.subject());
 
     // Generate ephemeral key pair
     let key_pair = KeyPair::generate_ecdsa_p256()?;
@@ -130,7 +130,7 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
         FulcioClient::public()
     };
 
-    let proof_of_possession = key_pair.sign(email.as_bytes())?;
+    let proof_of_possession = key_pair.sign(subject.as_bytes())?;
     let cert_response = fulcio_client
         .create_signing_certificate(&identity_token, &public_key_pem, &proof_of_possession)
         .await?;

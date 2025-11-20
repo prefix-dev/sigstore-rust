@@ -4,13 +4,14 @@
 
 use crate::error::{Error, Result};
 use base64::Engine;
+use serde::Serialize;
 use sigstore_bundle::validate_bundle_with_options;
 use sigstore_bundle::ValidationOptions;
 use sigstore_crypto::{verify_signature, Keyring, SignedNote, SigningScheme};
 use sigstore_trust_root::TrustedRoot;
 use sigstore_tsa::{verify_timestamp_response, VerifyOpts as TsaVerifyOpts};
 use sigstore_types::bundle::{InclusionProof, VerificationMaterialContent};
-use sigstore_types::{Bundle, SignatureContent};
+use sigstore_types::{Bundle, SignatureContent, TransparencyLogEntry};
 use x509_cert::der::Decode;
 use x509_cert::Certificate;
 
@@ -901,7 +902,7 @@ impl Verifier {
                             .map_err(|e| Error::Verification(format!("failed to parse certificate for time validation: {}", e)))?;
 
                         // Convert certificate validity times to Unix timestamps
-                        use std::time::{SystemTime, UNIX_EPOCH};
+                        use std::time::UNIX_EPOCH;
                         let not_before_system = cert.tbs_certificate.validity.not_before.to_system_time();
                         let not_after_system = cert.tbs_certificate.validity.not_after.to_system_time();
 
@@ -982,6 +983,13 @@ impl Verifier {
                 if let Some(ref inclusion_proof) = entry.inclusion_proof {
                     if let Some(ref trusted_root) = self.trusted_root {
                         verify_checkpoint(&inclusion_proof.checkpoint.envelope, inclusion_proof, trusted_root)?;
+                    }
+                }
+
+                // 7b. Verify inclusion promise (SET) if present and we have a trusted root
+                if entry.inclusion_promise.is_some() {
+                    if let Some(ref trusted_root) = self.trusted_root {
+                        verify_set(entry, trusted_root)?;
                     }
                 }
 
@@ -1527,4 +1535,74 @@ mod tests {
         let _verifier = Verifier::new();
         let _default = Verifier::default();
     }
+}
+
+#[derive(Serialize)]
+struct RekorPayload {
+    body: String,
+    #[serde(rename = "integratedTime")]
+    integrated_time: i64,
+    #[serde(rename = "logIndex")]
+    log_index: i64,
+    #[serde(rename = "logID")]
+    log_id: String,
+}
+
+fn verify_set(entry: &TransparencyLogEntry, trusted_root: &TrustedRoot) -> Result<()> {
+    let promise = entry
+        .inclusion_promise
+        .as_ref()
+        .ok_or(Error::Verification("Missing inclusion promise".into()))?;
+
+    // Find the key for the log ID
+    // entry.log_id.key_id is base64 encoded
+    // trusted_root keys are indexed by base64 encoded key_id
+    let log_key_bytes = trusted_root
+        .rekor_key_for_log(&entry.log_id.key_id)
+        .map_err(|_| Error::Verification(format!("Unknown log ID: {}", entry.log_id.key_id)))?;
+
+    // Construct the payload
+    // entry.canonicalized_body is already base64 encoded
+    let body = entry.canonicalized_body.clone();
+
+    let integrated_time = entry
+        .integrated_time
+        .parse::<i64>()
+        .map_err(|_| Error::Verification("Invalid integrated time".into()))?;
+    let log_index = entry
+        .log_index
+        .parse::<i64>()
+        .map_err(|_| Error::Verification("Invalid log index".into()))?;
+
+    // Log ID for payload must be hex encoded
+    let log_id_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&entry.log_id.key_id)
+        .map_err(|_| Error::Verification("Invalid base64 log ID".into()))?;
+    let log_id_hex = hex::encode(log_id_bytes);
+
+    let payload = RekorPayload {
+        body,
+        integrated_time,
+        log_index,
+        log_id: log_id_hex,
+    };
+
+    let canonical_json = serde_json_canonicalizer::to_vec(&payload)
+        .map_err(|e| Error::Verification(format!("Canonicalization failed: {}", e)))?;
+
+    // Verify signature
+    // promise.signed_entry_timestamp is base64 encoded
+    let signature = base64::engine::general_purpose::STANDARD
+        .decode(&promise.signed_entry_timestamp)
+        .map_err(|_| Error::Verification("Invalid base64 signature".into()))?;
+
+    verify_signature(
+        &log_key_bytes,
+        &canonical_json,
+        &signature,
+        SigningScheme::EcdsaP256Sha256,
+    )
+    .map_err(|e| Error::Verification(format!("SET verification failed: {}", e)))?;
+
+    Ok(())
 }
