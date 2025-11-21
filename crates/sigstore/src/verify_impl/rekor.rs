@@ -15,13 +15,10 @@ pub fn verify_dsse_entries(bundle: &Bundle) -> Result<()> {
         _ => return Ok(()), // Not a DSSE bundle
     };
 
-    // Get raw envelope JSON if available for accurate hash verification
-    let raw_json = bundle.raw_dsse_envelope.as_deref();
-
     for entry in &bundle.verification_material.tlog_entries {
         if entry.kind_version.kind == "dsse" {
             match entry.kind_version.version.as_str() {
-                "0.0.1" => verify_dsse_v001(entry, envelope, raw_json)?,
+                "0.0.1" => verify_dsse_v001(entry, envelope)?,
                 "0.0.2" => verify_dsse_v002(entry, envelope)?,
                 _ => {} // Unknown version, skip
             }
@@ -35,7 +32,6 @@ pub fn verify_dsse_entries(bundle: &Bundle) -> Result<()> {
 fn verify_dsse_v001(
     entry: &TransparencyLogEntry,
     envelope: &sigstore_types::DsseEnvelope,
-    raw_envelope_json: Option<&str>,
 ) -> Result<()> {
     let body = RekorEntryBody::from_base64_json(
         &entry.canonicalized_body,
@@ -53,16 +49,9 @@ fn verify_dsse_v001(
         }
     };
 
-    // Compute actual envelope hash using canonical JSON (RFC 8785)
-    // Use the raw JSON if available, otherwise reserialize the envelope
-    let envelope_json = if let Some(raw_json) = raw_envelope_json {
-        raw_json.as_bytes()
-    } else {
-        // Fall back to reserializing the envelope
-        &serde_json_canonicalizer::to_vec(envelope).map_err(|e| {
-            Error::Verification(format!("failed to canonicalize envelope JSON: {}", e))
-        })?
-    };
+    // Compute actual envelope hash
+    let envelope_json = serde_json_canonicalizer::to_vec(envelope)
+        .map_err(|e| Error::Verification(format!("failed to canonicalize envelope JSON: {}", e)))?;
 
     let envelope_hash = sigstore_crypto::sha256(&envelope_json);
     let envelope_hash_hex = hex::encode(envelope_hash);

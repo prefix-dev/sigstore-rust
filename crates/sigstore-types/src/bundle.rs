@@ -74,23 +74,12 @@ pub struct Bundle {
     /// The content being signed (message signature or DSSE envelope)
     #[serde(flatten)]
     pub content: SignatureContent,
-    /// Raw JSON of the DSSE envelope (for hash verification)
-    /// This field is not serialized but preserved during deserialization
-    #[serde(skip)]
-    pub raw_dsse_envelope: Option<String>,
 }
 
 impl Bundle {
     /// Parse a bundle from JSON, preserving raw DSSE envelope for hash verification
     pub fn from_json(json: &str) -> Result<Self> {
-        // First, extract the raw DSSE envelope JSON if present
-        let raw_dsse_envelope = extract_dsse_envelope_json(json);
-
-        // Parse the bundle normally
-        let mut bundle: Bundle = serde_json::from_str(json).map_err(Error::Json)?;
-        bundle.raw_dsse_envelope = raw_dsse_envelope;
-
-        Ok(bundle)
+        serde_json::from_str(json).map_err(Error::Json)
     }
 
     /// Serialize the bundle to JSON
@@ -318,52 +307,6 @@ pub struct Rfc3161Timestamp {
     pub signed_timestamp: String,
 }
 
-/// Extract the raw DSSE envelope JSON from a bundle JSON string
-fn extract_dsse_envelope_json(json: &str) -> Option<String> {
-    // Find the dsseEnvelope field and extract its value
-    // We need to be careful to extract the exact JSON object, including nested objects
-
-    let start_pattern = r#""dsseEnvelope":"#;
-    let start_idx = json.find(start_pattern)?;
-    let json_start = start_idx + start_pattern.len();
-
-    // Find the matching brace
-    let json_bytes = json.as_bytes();
-    let mut brace_count = 0;
-    let mut in_string = false;
-    let mut escape_next = false;
-    let mut end_idx = json_start;
-
-    for i in json_start..json_bytes.len() {
-        let ch = json_bytes[i] as char;
-
-        if escape_next {
-            escape_next = false;
-            continue;
-        }
-
-        match ch {
-            '\\' if in_string => escape_next = true,
-            '"' => in_string = !in_string,
-            '{' if !in_string => brace_count += 1,
-            '}' if !in_string => {
-                brace_count -= 1;
-                if brace_count == 0 {
-                    end_idx = i + 1;
-                    break;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    if brace_count == 0 && end_idx > json_start {
-        Some(json[json_start..end_idx].to_string())
-    } else {
-        None
-    }
-}
-
 // Custom Deserialize implementation for Bundle
 impl<'de> Deserialize<'de> for Bundle {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
@@ -385,7 +328,6 @@ impl<'de> Deserialize<'de> for Bundle {
             media_type: helper.media_type,
             verification_material: helper.verification_material,
             content: helper.content,
-            raw_dsse_envelope: None, // Will be set by from_json
         })
     }
 }

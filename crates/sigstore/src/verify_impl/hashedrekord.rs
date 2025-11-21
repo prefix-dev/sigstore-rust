@@ -41,32 +41,37 @@ fn verify_hashedrekord_entry(
     )
     .map_err(|e| Error::Verification(format!("failed to parse Rekor body: {}", e)))?;
 
-    // Extract expected artifact hash and validate
-    let artifact_hash_to_check = get_artifact_hash(artifact, &bundle.content, skip_artifact_hash)?;
+    // If we are skipping artifact hash verification, we can skip this part
+    if !skip_artifact_hash {
+        // Extract expected artifact hash and validate
+        let artifact_hash_to_check =
+            get_artifact_hash(artifact, &bundle.content, skip_artifact_hash)?;
 
-    match &body {
-        RekorEntryBody::HashedRekordV001(rekord) => {
-            // v0.0.1: spec.data.hash.value (hex-encoded)
-            let expected = Sha256Hash::from_hex(&rekord.spec.data.hash.value)
-                .map_err(|e| Error::Verification(format!("invalid hash in Rekor entry: {}", e)))?;
-            validate_artifact_hash(&artifact_hash_to_check, &expected)?;
-        }
-        RekorEntryBody::HashedRekordV002(rekord) => {
-            // v0.0.2: spec.hashedRekordV002.data.digest (base64-encoded)
-            let expected =
-                Sha256Hash::from_base64(rekord.spec.hashed_rekord_v002.data.digest.as_str())
-                    .map_err(|e| {
-                        Error::Verification(format!("invalid digest in Rekor entry: {}", e))
-                    })?;
-            validate_artifact_hash(&artifact_hash_to_check, &expected)?;
-        }
-        _ => {
-            return Err(Error::Verification(format!(
-                "expected HashedRekord body, got different type for version {}",
-                entry.kind_version.version
-            )))
-        }
-    };
+        match &body {
+            RekorEntryBody::HashedRekordV001(rekord) => {
+                // v0.0.1: spec.data.hash.value (hex-encoded)
+                let expected = Sha256Hash::from_hex(&rekord.spec.data.hash.value).map_err(|e| {
+                    Error::Verification(format!("invalid hash in Rekor entry: {}", e))
+                })?;
+                validate_artifact_hash(&artifact_hash_to_check, &expected)?;
+            }
+            RekorEntryBody::HashedRekordV002(rekord) => {
+                // v0.0.2: spec.hashedRekordV002.data.digest (base64-encoded)
+                let expected =
+                    Sha256Hash::from_base64(rekord.spec.hashed_rekord_v002.data.digest.as_str())
+                        .map_err(|e| {
+                            Error::Verification(format!("invalid digest in Rekor entry: {}", e))
+                        })?;
+                validate_artifact_hash(&artifact_hash_to_check, &expected)?;
+            }
+            _ => {
+                return Err(Error::Verification(format!(
+                    "expected HashedRekord body, got different type for version {}",
+                    entry.kind_version.version
+                )));
+            }
+        };
+    }
 
     // Validate certificate matches
     validate_certificate_match(entry, &body, bundle)?;

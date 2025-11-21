@@ -328,13 +328,15 @@ impl Verifier {
 
         // 7. Extract and validate integrated time from tlog entries
         if policy.verify_tlog {
-            if let Some(ref root) = self.trusted_root {
-                verify_impl::tlog::verify_tlog_entries(
-                    bundle,
-                    Some(root),
-                    cert_info.not_before,
-                    cert_info.not_after,
-                )?;
+            let integrated_time = verify_impl::tlog::verify_tlog_entries(
+                bundle,
+                self.trusted_root.as_ref(),
+                cert_info.not_before,
+                cert_info.not_after,
+            )?;
+
+            if let Some(time) = integrated_time {
+                result.integrated_time = Some(time);
             }
         }
 
