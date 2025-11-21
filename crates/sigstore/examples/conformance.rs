@@ -6,11 +6,11 @@
 //! This binary implements the conformance test protocol for Sigstore clients.
 
 use sigstore::bundle::{BundleBuilder, TlogEntryBuilder};
-use sigstore::crypto::KeyPair;
+use sigstore::crypto::{KeyPair, PublicKeyPem};
 use sigstore::fulcio::FulcioClient;
 use sigstore::oidc::parse_identity_token;
 use sigstore::rekor::RekorClient;
-use sigstore::types::{Bundle, MediaType};
+use sigstore::types::{Bundle, MediaType, Sha256Hash};
 use sigstore::verify::{verify_with_trusted_root, VerificationPolicy};
 use sigstore_trust_root::TrustedRoot;
 use std::env;
@@ -249,17 +249,30 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
 
     // Sign the artifact
     let signature = key_pair.sign(&artifact_data)?;
-    let signature_b64 = signature.to_base64();
+
+    // Convert signature to base64 for bundle
+    use base64::Engine;
+    let signature_b64 = base64::engine::general_purpose::STANDARD.encode(signature.as_bytes());
 
     // Compute artifact hash
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(&artifact_data);
     let artifact_hash = hasher.finalize();
+
+    // Convert to Sha256Hash type
+    let mut hash_bytes = [0u8; 32];
+    hash_bytes.copy_from_slice(&artifact_hash);
+    let artifact_hash_typed = Sha256Hash::from_bytes(hash_bytes);
+
+    // For v2, we still need hex for now
     let artifact_hash_hex = hex::encode(artifact_hash);
 
     // Upload to Rekor
     let rekor = RekorClient::new(&rekor_url);
+
+    // Convert leaf_cert_pem to PublicKeyPem
+    let public_key_pem = PublicKeyPem::new(leaf_cert_pem.to_string());
 
     let log_entry = if use_rekor_v2 {
         let hashed_rekord =
@@ -267,7 +280,7 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
         rekor.create_entry_v2(hashed_rekord).await?
     } else {
         let hashed_rekord =
-            sigstore::rekor::HashedRekord::new(&artifact_hash_hex, &signature_b64, leaf_cert_pem);
+            sigstore::rekor::HashedRekord::new(&artifact_hash_typed, &signature, &public_key_pem);
         rekor.create_entry(hashed_rekord).await?
     };
 

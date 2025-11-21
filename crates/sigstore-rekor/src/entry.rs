@@ -2,6 +2,8 @@
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use sigstore_crypto::{PublicKeyPem, Signature};
+use sigstore_types::{Base64Pem, Base64Signature, Sha256Hash};
 use std::collections::HashMap;
 
 /// A log entry from Rekor
@@ -200,7 +202,7 @@ pub struct HashedRekordHash {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HashedRekordSignature {
     /// Signature content (base64 encoded)
-    pub content: String,
+    pub content: Base64Signature,
     /// Public key
     #[serde(rename = "publicKey")]
     pub public_key: HashedRekordPublicKey,
@@ -210,7 +212,7 @@ pub struct HashedRekordSignature {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HashedRekordPublicKey {
     /// PEM-encoded public key or certificate
-    pub content: String,
+    pub content: Base64Pem,
 }
 
 impl HashedRekord {
@@ -220,10 +222,11 @@ impl HashedRekord {
     /// * `artifact_hash` - Hex-encoded SHA256 hash of the artifact
     /// * `signature_base64` - Base64-encoded signature
     /// * `public_key_pem` - PEM-encoded public key or certificate (will be base64-encoded for API)
-    pub fn new(artifact_hash: &str, signature_base64: &str, public_key_pem: &str) -> Self {
-        // Rekor API expects the PEM to be base64-encoded
-        let public_key_base64 = base64::engine::general_purpose::STANDARD.encode(public_key_pem);
-
+    pub fn new(
+        artifact_hash: &Sha256Hash,
+        signature: &Signature,
+        public_key_pem: &PublicKeyPem,
+    ) -> Self {
         Self {
             api_version: "0.0.1".to_string(),
             kind: "hashedrekord".to_string(),
@@ -231,13 +234,13 @@ impl HashedRekord {
                 data: HashedRekordData {
                     hash: HashedRekordHash {
                         algorithm: "sha256".to_string(),
-                        value: artifact_hash.to_string(),
+                        value: artifact_hash.to_hex(),
                     },
                 },
                 signature: HashedRekordSignature {
-                    content: signature_base64.to_string(),
+                    content: signature.clone().into(),
                     public_key: HashedRekordPublicKey {
-                        content: public_key_base64,
+                        content: public_key_pem.clone().into(),
                     },
                 },
             },
@@ -396,12 +399,23 @@ mod tests {
     #[test]
     fn test_hashed_rekord_creation() {
         let entry = HashedRekord::new(
-            "abcd1234",
-            "c2lnbmF0dXJl",
-            "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+            &Sha256Hash::from_bytes([0u8; 32]),
+            &Signature::from_bytes(b"signature"),
+            &PublicKeyPem::new(
+                "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----".to_string(),
+            ),
         );
         assert_eq!(entry.kind, "hashedrekord");
         assert_eq!(entry.api_version, "0.0.1");
+        assert_eq!(entry.spec.data.hash.algorithm, "sha256");
+        assert_eq!(
+            entry.spec.data.hash.value,
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        );
+        assert_eq!(
+            entry.spec.signature.content,
+            Base64Signature::new("c2lnbmF0dXJl".to_string())
+        );
     }
 
     #[test]

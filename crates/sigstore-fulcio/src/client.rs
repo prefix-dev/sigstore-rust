@@ -3,6 +3,7 @@
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use sigstore_crypto::{PublicKeyPem, Signature};
+use sigstore_types::Base64Signature;
 
 /// A client for interacting with Fulcio
 pub struct FulcioClient {
@@ -77,7 +78,7 @@ impl FulcioClient {
                     algorithm: String::new(), // Not needed for PEM (contains algorithm info)
                     content: public_key.as_str().to_string(),
                 },
-                proof_of_possession: proof_of_possession.to_base64(),
+                proof_of_possession: proof_of_possession.clone().into(),
             },
         };
 
@@ -176,7 +177,7 @@ pub struct PublicKeyRequest {
     /// Public key
     pub public_key: PublicKeyData,
     /// Proof of possession (signature)
-    pub proof_of_possession: String,
+    pub proof_of_possession: Base64Signature,
 }
 
 /// Public key data for API requests

@@ -8,6 +8,7 @@ use aws_lc_rs::{
         ECDSA_P256_SHA256_ASN1_SIGNING, ECDSA_P384_SHA384_ASN1_SIGNING,
     },
 };
+use sigstore_types::{Base64Pem, Base64Signature};
 
 /// A PEM-encoded public key
 ///
@@ -47,6 +48,13 @@ impl AsRef<str> for PublicKeyPem {
     }
 }
 
+impl From<PublicKeyPem> for Base64Pem {
+    fn from(pem: PublicKeyPem) -> Self {
+        use base64::Engine;
+        Base64Pem::new(base64::engine::general_purpose::STANDARD.encode(pem.0))
+    }
+}
+
 /// A cryptographic signature
 ///
 /// This type wraps raw signature bytes. It can be created by signing
@@ -58,6 +66,11 @@ impl Signature {
     /// Create a new Signature from raw bytes
     pub fn new(bytes: Vec<u8>) -> Self {
         Self(bytes)
+    }
+
+    /// Create a new Signature from a byte slice
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        Self(bytes.to_vec())
     }
 
     /// Get the raw signature bytes
@@ -79,11 +92,12 @@ impl Signature {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+}
 
-    /// Encode the signature as base64
-    pub fn to_base64(&self) -> String {
+impl From<Signature> for Base64Signature {
+    fn from(sig: Signature) -> Self {
         use base64::Engine;
-        base64::engine::general_purpose::STANDARD.encode(&self.0)
+        Base64Signature::new(base64::engine::general_purpose::STANDARD.encode(sig.0))
     }
 }
 

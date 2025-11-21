@@ -116,6 +116,7 @@ impl BundleBuilder {
                 },
             },
             content: signature_content,
+            raw_dsse_envelope: None, // Will be set if parsed from JSON
         })
     }
 }

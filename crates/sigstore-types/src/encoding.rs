@@ -367,15 +367,15 @@ impl KeyId {
     }
 }
 
-impl From<String> for KeyId {
-    fn from(s: String) -> Self {
-        KeyId::new(s)
+impl Default for KeyId {
+    fn default() -> Self {
+        KeyId(String::new())
     }
 }
 
-impl Default for KeyId {
-    fn default() -> Self {
-        KeyId::new(String::new())
+impl From<String> for KeyId {
+    fn from(s: String) -> Self {
+        KeyId::new(s)
     }
 }
 

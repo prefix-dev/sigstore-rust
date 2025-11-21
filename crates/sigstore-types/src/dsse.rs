@@ -22,11 +22,11 @@ pub struct DsseEnvelope {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DsseSignature {
+    /// Base64-encoded signature
+    pub sig: Base64Signature,
     /// Key ID (optional hint for key lookup)
     #[serde(default, skip_serializing_if = "KeyId::is_empty")]
     pub keyid: KeyId,
-    /// Base64-encoded signature
-    pub sig: Base64Signature,
 }
 
 impl DsseEnvelope {
@@ -105,13 +105,37 @@ mod tests {
                 .to_string()
                 .into(),
             signatures: vec![DsseSignature {
-                keyid: "".to_string().into(),
                 sig: "MEQCIHjhpw==".to_string().into(),
+                keyid: KeyId::default(),
             }],
         };
 
         let json = serde_json::to_string(&envelope).unwrap();
         let parsed: DsseEnvelope = serde_json::from_str(&json).unwrap();
         assert_eq!(envelope, parsed);
+    }
+
+    #[test]
+    fn test_dsse_envelope_keyid_preservation() {
+        // Test that empty string keyid is preserved during round-trip
+        let json_with_empty_keyid = r#"{"payloadType":"application/vnd.in-toto+json","payload":"test","signatures":[{"sig":"sig","keyid":""}]}"#;
+
+        let envelope: DsseEnvelope = serde_json::from_str(json_with_empty_keyid).unwrap();
+        assert_eq!(envelope.signatures[0].keyid, KeyId::default());
+
+        let reserialized = serde_json::to_string(&envelope).unwrap();
+        assert!(
+            !reserialized.contains("keyid"),
+            "Empty keyid should be omitted in output"
+        );
+
+        // Test with non-empty keyid
+        let json_with_keyid = r#"{"payloadType":"application/vnd.in-toto+json","payload":"test","signatures":[{"sig":"sig","keyid":"test-key"}]}"#;
+        let envelope_with_keyid: DsseEnvelope = serde_json::from_str(json_with_keyid).unwrap();
+        let json_out = serde_json::to_string(&envelope_with_keyid).unwrap();
+        assert!(
+            json_out.contains(r#""keyid":"test-key""#),
+            "Non-empty keyid should be included in output"
+        );
     }
 }

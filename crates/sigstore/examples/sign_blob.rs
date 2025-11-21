@@ -4,7 +4,7 @@ use sigstore::crypto::KeyPair;
 use sigstore::fulcio::FulcioClient;
 use sigstore::oidc::get_identity_token;
 use sigstore::rekor::{HashedRekord, RekorClient};
-use sigstore::types::MediaType;
+use sigstore::types::{MediaType, Sha256Hash};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -83,18 +83,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut hasher = Sha256::new();
     hasher.update(&artifact_data);
     let artifact_hash = hasher.finalize();
-    let artifact_hash_hex = hex::encode(artifact_hash);
+
+    // Convert to Sha256Hash type
+    let mut hash_bytes = [0u8; 32];
+    hash_bytes.copy_from_slice(&artifact_hash);
+    let artifact_hash_typed = Sha256Hash::from_bytes(hash_bytes);
 
     // Sign the artifact data directly
     let signature = key_pair.sign(&artifact_data)?;
-    let signature_b64 = signature.to_base64();
 
     // 5. Rekor: Upload to Transparency Log
     println!("Uploading to Rekor...");
     let rekor = RekorClient::public();
 
     // Create hashedrekord entry
-    let hashed_rekord = HashedRekord::new(&artifact_hash_hex, &signature_b64, leaf_cert_pem);
+    let hashed_rekord = HashedRekord::new(&artifact_hash_typed, &signature, &public_key_pem);
 
     let log_entry = rekor.create_entry(hashed_rekord).await?;
     println!("Created Rekor entry with index: {}", log_entry.log_index);
@@ -152,6 +155,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let tlog_entry = tlog_builder.build();
+
+    // Convert signature to base64 for bundle
+    use base64::Engine;
+    let signature_b64 = base64::engine::general_purpose::STANDARD.encode(signature.as_bytes());
 
     let bundle = BundleBuilder::new()
         .version(MediaType::Bundle0_3)

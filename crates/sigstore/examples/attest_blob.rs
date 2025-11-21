@@ -6,7 +6,7 @@ use sigstore::fulcio::FulcioClient;
 use sigstore::oidc::get_identity_token;
 use sigstore::rekor::{DsseEntry, RekorClient};
 use sigstore::types::{DsseEnvelope, DsseSignature, MediaType};
-use sigstore_types::{Base64Payload, Base64Signature, KeyId};
+use sigstore_types::{Base64Payload, KeyId};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -156,15 +156,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let payload_type = "application/vnd.in-toto+json";
     let pae = sigstore::types::dsse::pae(payload_type, statement_json.as_bytes());
     let signature = key_pair.sign(&pae)?;
-    let signature_b64 = signature.to_base64();
 
     // Create DSSE envelope
     let dsse_envelope = DsseEnvelope::new(
         payload_type.to_string(),
         Base64Payload::new(payload_b64),
         vec![DsseSignature {
+            sig: signature.into(),
             keyid: KeyId::default(),
-            sig: Base64Signature::new(signature_b64.clone()),
         }],
     );
 
