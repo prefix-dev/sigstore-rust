@@ -1342,11 +1342,10 @@ name = "sigstore-merkle"
 version = "0.1.0"
 dependencies = [
  "base64",
- "digest",
  "hex",
  "serde",
  "serde_json",
- "sha2",
+ "sigstore-crypto",
  "sigstore-types",
  "thiserror",
 ]
@@ -1360,7 +1359,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sigstore-crypto",
  "sigstore-types",
  "thiserror",
  "tokio",

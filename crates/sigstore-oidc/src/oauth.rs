@@ -8,7 +8,6 @@ use crate::token::IdentityToken;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 /// OAuth configuration for a provider
 #[derive(Debug, Clone)]
@@ -102,9 +101,8 @@ impl OAuthClient {
         rng.fill(&mut verifier_bytes);
         let verifier = URL_SAFE_NO_PAD.encode(verifier_bytes);
 
-        let mut hasher = Sha256::new();
-        hasher.update(verifier.as_bytes());
-        let challenge_bytes = hasher.finalize();
+        // Compute PKCE challenge using SHA-256
+        let challenge_bytes = sigstore_crypto::sha256(verifier.as_bytes());
         let challenge = URL_SAFE_NO_PAD.encode(challenge_bytes);
 
         let params = [

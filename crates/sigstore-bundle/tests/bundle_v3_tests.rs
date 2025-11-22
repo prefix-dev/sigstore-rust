@@ -208,35 +208,29 @@ fn test_v3_bundle_certificate_extraction() {
 
 #[test]
 fn test_inclusion_proof_verification() {
-    use base64::{engine::general_purpose::STANDARD, Engine};
     use sigstore_merkle::{hash_leaf, verify_inclusion_proof};
+    use sigstore_types::Sha256Hash;
 
     let bundle = Bundle::from_json(BUNDLE_V3_JSON).unwrap();
     let entry = &bundle.verification_material.tlog_entries[0];
     let proof = entry.inclusion_proof.as_ref().unwrap();
 
     // Decode the canonicalized body
+    use base64::{engine::general_purpose::STANDARD, Engine};
     let body = STANDARD.decode(&entry.canonicalized_body).unwrap();
 
     // Hash the leaf
     let leaf_hash = hash_leaf(&body);
 
     // Decode proof hashes
-    let proof_hashes: Vec<[u8; 32]> = proof
+    let proof_hashes: Vec<Sha256Hash> = proof
         .hashes
         .iter()
-        .map(|h| {
-            let bytes = STANDARD.decode(h).unwrap();
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&bytes);
-            arr
-        })
+        .map(|h| Sha256Hash::from_base64(h).unwrap())
         .collect();
 
     // Decode root hash
-    let root_bytes = STANDARD.decode(&proof.root_hash).unwrap();
-    let mut root_hash = [0u8; 32];
-    root_hash.copy_from_slice(&root_bytes);
+    let root_hash = Sha256Hash::from_base64(&proof.root_hash).unwrap();
 
     // Verify the inclusion proof
     let leaf_index: u64 = proof.log_index.as_u64().unwrap();

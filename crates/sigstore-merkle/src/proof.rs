@@ -4,7 +4,8 @@
 //! The algorithm follows the reference implementations from sigstore-python and sigstore-go.
 
 use crate::error::{Error, Result};
-use crate::tree::{bit_length, hash_children, hash_leaf, HASH_SIZE};
+use crate::tree::{bit_length, hash_children, hash_leaf};
+use sigstore_types::Sha256Hash;
 
 /// Verify an inclusion proof for a leaf in a Merkle tree
 ///
@@ -19,11 +20,11 @@ use crate::tree::{bit_length, hash_children, hash_leaf, HASH_SIZE};
 /// * `Ok(())` if the proof is valid
 /// * `Err(...)` if the proof is invalid
 pub fn verify_inclusion_proof(
-    leaf_hash: &[u8; HASH_SIZE],
+    leaf_hash: &Sha256Hash,
     leaf_index: u64,
     tree_size: u64,
-    proof_hashes: &[[u8; HASH_SIZE]],
-    expected_root: &[u8; HASH_SIZE],
+    proof_hashes: &[Sha256Hash],
+    expected_root: &Sha256Hash,
 ) -> Result<()> {
     if tree_size == 0 {
         return Err(Error::InvalidTreeSize(
@@ -59,10 +60,10 @@ pub fn verify_inclusion_proof(
     }
 
     // Verify the calculated root matches expected
-    if hash != *expected_root {
+    if &hash != expected_root {
         return Err(Error::HashMismatch {
-            expected: hex::encode(expected_root),
-            actual: hex::encode(hash),
+            expected: expected_root.to_hex(),
+            actual: hash.to_hex(),
         });
     }
 
@@ -84,9 +85,9 @@ pub fn verify_inclusion_proof(
 pub fn verify_consistency_proof(
     old_size: u64,
     new_size: u64,
-    proof_hashes: &[[u8; HASH_SIZE]],
-    old_root: &[u8; HASH_SIZE],
-    new_root: &[u8; HASH_SIZE],
+    proof_hashes: &[Sha256Hash],
+    old_root: &Sha256Hash,
+    new_root: &Sha256Hash,
 ) -> Result<()> {
     if old_size == 0 {
         // Empty tree is consistent with any tree
@@ -104,8 +105,8 @@ pub fn verify_consistency_proof(
         // Same size, roots must match
         if old_root != new_root {
             return Err(Error::HashMismatch {
-                expected: hex::encode(old_root),
-                actual: hex::encode(new_root),
+                expected: old_root.to_hex(),
+                actual: new_root.to_hex(),
             });
         }
         if !proof_hashes.is_empty() {
@@ -160,19 +161,19 @@ pub fn verify_consistency_proof(
     let calc_new_root = chain_border_right(&hash2, &proof[inner..]);
 
     // Verify both roots
-    if calc_old_root != *old_root {
+    if &calc_old_root != old_root {
         return Err(Error::VerificationFailed(format!(
             "old root mismatch: expected {}, got {}",
-            hex::encode(old_root),
-            hex::encode(calc_old_root)
+            old_root.to_hex(),
+            calc_old_root.to_hex()
         )));
     }
 
-    if calc_new_root != *new_root {
+    if &calc_new_root != new_root {
         return Err(Error::VerificationFailed(format!(
             "new root mismatch: expected {}, got {}",
-            hex::encode(new_root),
-            hex::encode(calc_new_root)
+            new_root.to_hex(),
+            calc_new_root.to_hex()
         )));
     }
 
@@ -194,7 +195,7 @@ fn inner_proof_size(index: u64, tree_size: u64) -> usize {
 }
 
 /// Chain hashes along the inner proof path for new root verification
-fn chain_inner(seed: &[u8; HASH_SIZE], proof: &[[u8; HASH_SIZE]], index: u64) -> [u8; HASH_SIZE] {
+fn chain_inner(seed: &Sha256Hash, proof: &[Sha256Hash], index: u64) -> Sha256Hash {
     let mut hash = *seed;
     for (i, p) in proof.iter().enumerate() {
         if (index >> i) & 1 == 0 {
@@ -209,11 +210,7 @@ fn chain_inner(seed: &[u8; HASH_SIZE], proof: &[[u8; HASH_SIZE]], index: u64) ->
 /// Chain hashes along the inner proof path for old root verification
 ///
 /// Only hashes when the index bit is 1 (we're coming from the left)
-fn chain_inner_right(
-    seed: &[u8; HASH_SIZE],
-    proof: &[[u8; HASH_SIZE]],
-    index: u64,
-) -> [u8; HASH_SIZE] {
+fn chain_inner_right(seed: &Sha256Hash, proof: &[Sha256Hash], index: u64) -> Sha256Hash {
     let mut hash = *seed;
     for (i, p) in proof.iter().enumerate() {
         if (index >> i) & 1 == 1 {
@@ -225,7 +222,7 @@ fn chain_inner_right(
 }
 
 /// Chain hashes along the right border (all proof hashes go on the left)
-fn chain_border_right(seed: &[u8; HASH_SIZE], proof: &[[u8; HASH_SIZE]]) -> [u8; HASH_SIZE] {
+fn chain_border_right(seed: &Sha256Hash, proof: &[Sha256Hash]) -> Sha256Hash {
     let mut hash = *seed;
     for p in proof {
         hash = hash_children(p, &hash);
@@ -241,37 +238,15 @@ pub fn verify_inclusion_proof_base64(
     proof_hashes_b64: &[String],
     expected_root_b64: &str,
 ) -> Result<()> {
-    use base64::{engine::general_purpose::STANDARD, Engine};
-
     let leaf_hash = hash_leaf(leaf_data);
 
-    let proof_hashes: Vec<[u8; HASH_SIZE]> = proof_hashes_b64
+    let proof_hashes: Vec<Sha256Hash> = proof_hashes_b64
         .iter()
-        .map(|h| {
-            let bytes = STANDARD.decode(h)?;
-            if bytes.len() != HASH_SIZE {
-                return Err(Error::InvalidProof(format!(
-                    "invalid hash size: expected {}, got {}",
-                    HASH_SIZE,
-                    bytes.len()
-                )));
-            }
-            let mut arr = [0u8; HASH_SIZE];
-            arr.copy_from_slice(&bytes);
-            Ok(arr)
-        })
+        .map(|h| Sha256Hash::from_base64(h).map_err(|e| Error::InvalidProof(e.to_string())))
         .collect::<Result<Vec<_>>>()?;
 
-    let root_bytes = STANDARD.decode(expected_root_b64)?;
-    if root_bytes.len() != HASH_SIZE {
-        return Err(Error::InvalidProof(format!(
-            "invalid root hash size: expected {}, got {}",
-            HASH_SIZE,
-            root_bytes.len()
-        )));
-    }
-    let mut expected_root = [0u8; HASH_SIZE];
-    expected_root.copy_from_slice(&root_bytes);
+    let expected_root = Sha256Hash::from_base64(expected_root_b64)
+        .map_err(|e| Error::InvalidProof(e.to_string()))?;
 
     verify_inclusion_proof(
         &leaf_hash,
@@ -312,12 +287,12 @@ mod tests {
 
     #[test]
     fn test_chain_border_right() {
-        let seed = [0u8; 32];
-        let empty: &[[u8; 32]] = &[];
+        let seed = Sha256Hash::from_bytes([0u8; 32]);
+        let empty: &[Sha256Hash] = &[];
         let result = chain_border_right(&seed, empty);
         assert_eq!(result, seed);
 
-        let proof = [[1u8; 32]];
+        let proof = [Sha256Hash::from_bytes([1u8; 32])];
         let result = chain_border_right(&seed, &proof);
         assert_ne!(result, seed);
     }
@@ -327,7 +302,7 @@ mod tests {
         // Tree with single leaf: root = hash_leaf(data)
         let data = b"test";
         let leaf_hash = hash_leaf(data);
-        let proof: &[[u8; 32]] = &[];
+        let proof: &[Sha256Hash] = &[];
 
         let result = verify_inclusion_proof(&leaf_hash, 0, 1, proof, &leaf_hash);
         assert!(result.is_ok());

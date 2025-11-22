@@ -3,9 +3,9 @@
 //! Test vectors from transparency-dev/merkle for validating our implementation.
 //! https://github.com/transparency-dev/merkle
 
-use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Deserialize;
-use sigstore_merkle::{hash_children, hash_leaf, verify_inclusion_proof, HASH_SIZE};
+use sigstore_merkle::{hash_children, hash_leaf, verify_inclusion_proof};
+use sigstore_types::Sha256Hash;
 use std::fs;
 use std::path::PathBuf;
 
@@ -41,12 +41,8 @@ fn test_data_dir() -> PathBuf {
 }
 
 /// Helper function to decode base64 hash
-fn decode_hash(s: &str) -> [u8; HASH_SIZE] {
-    let bytes = STANDARD.decode(s).expect("valid base64");
-    assert_eq!(bytes.len(), HASH_SIZE, "hash must be {} bytes", HASH_SIZE);
-    let mut arr = [0u8; HASH_SIZE];
-    arr.copy_from_slice(&bytes);
-    arr
+fn decode_hash(s: &str) -> Sha256Hash {
+    Sha256Hash::from_base64(s).expect("valid base64 SHA256 hash")
 }
 
 /// Load an inclusion test case from file
@@ -68,14 +64,8 @@ fn load_consistency_test(subdir: &str, name: &str) -> ConsistencyTestCase {
 }
 
 /// Try to decode a base64 hash, returning None if it's not 32 bytes
-fn try_decode_hash(s: &str) -> Option<[u8; HASH_SIZE]> {
-    let bytes = STANDARD.decode(s).ok()?;
-    if bytes.len() != HASH_SIZE {
-        return None;
-    }
-    let mut arr = [0u8; HASH_SIZE];
-    arr.copy_from_slice(&bytes);
-    Some(arr)
+fn try_decode_hash(s: &str) -> Option<Sha256Hash> {
+    Sha256Hash::from_base64(s).ok()
 }
 
 /// Run an inclusion test case
@@ -98,7 +88,7 @@ fn run_inclusion_test(test: &InclusionTestCase) {
         }
     };
 
-    let proof: Vec<[u8; HASH_SIZE]> = test
+    let proof: Vec<Sha256Hash> = test
         .proof
         .as_ref()
         .map(|p| p.iter().map(|s| decode_hash(s)).collect())
@@ -126,7 +116,7 @@ fn run_inclusion_test(test: &InclusionTestCase) {
 fn run_consistency_test(test: &ConsistencyTestCase) {
     let root1 = decode_hash(&test.root1);
     let root2 = decode_hash(&test.root2);
-    let proof: Vec<[u8; HASH_SIZE]> = test
+    let proof: Vec<Sha256Hash> = test
         .proof
         .as_ref()
         .map(|p| p.iter().map(|s| decode_hash(s)).collect())
@@ -352,7 +342,7 @@ fn test_inclusion_four_leaves() {
 #[test]
 fn test_inclusion_wrong_root() {
     let leaf_hash = hash_leaf(b"test");
-    let wrong_root = [0u8; HASH_SIZE];
+    let wrong_root = Sha256Hash::from_bytes([0u8; 32]);
 
     let result = verify_inclusion_proof(&leaf_hash, 0, 1, &[], &wrong_root);
     assert!(result.is_err(), "Should fail with wrong root");
@@ -394,7 +384,7 @@ fn test_consistency_same_size() {
 #[test]
 fn test_consistency_empty_old_tree() {
     let root = hash_leaf(b"test");
-    let empty_root = [0u8; HASH_SIZE];
+    let empty_root = Sha256Hash::from_bytes([0u8; 32]);
 
     // Empty tree is consistent with any tree
     let result = sigstore_merkle::verify_consistency_proof(0, 1, &[], &empty_root, &root);
@@ -418,16 +408,18 @@ fn test_hash_leaf_format() {
     let hash = hash_leaf(data);
 
     // Verify it's 32 bytes
-    assert_eq!(hash.len(), 32);
+    assert_eq!(hash.as_bytes().len(), 32);
 
     // Manually compute expected hash
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update([0x00]); // Leaf prefix
-    hasher.update(data);
-    let expected: [u8; 32] = hasher.finalize().into();
+    let mut raw_data = vec![0x00];
+    raw_data.extend_from_slice(data);
+    let expected = sigstore_crypto::sha256(&raw_data);
 
-    assert_eq!(hash, expected, "hash_leaf should use 0x00 prefix");
+    assert_eq!(
+        hash.as_bytes(),
+        &expected,
+        "hash_leaf should use 0x00 prefix"
+    );
 }
 
 /// Test hash_children produces correct RFC 6962 format
@@ -439,15 +431,17 @@ fn test_hash_children_format() {
     let hash = hash_children(&left, &right);
 
     // Verify it's 32 bytes
-    assert_eq!(hash.len(), 32);
+    assert_eq!(hash.as_bytes().len(), 32);
 
     // Manually compute expected hash
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update([0x01]); // Node prefix
-    hasher.update(left);
-    hasher.update(right);
-    let expected: [u8; 32] = hasher.finalize().into();
+    let mut raw_data = vec![0x01];
+    raw_data.extend_from_slice(left.as_bytes());
+    raw_data.extend_from_slice(right.as_bytes());
+    let expected = sigstore_crypto::sha256(&raw_data);
 
-    assert_eq!(hash, expected, "hash_children should use 0x01 prefix");
+    assert_eq!(
+        hash.as_bytes(),
+        &expected,
+        "hash_children should use 0x01 prefix"
+    );
 }

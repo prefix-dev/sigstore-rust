@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use sigstore::bundle::{BundleBuilder, TlogEntryBuilder};
 use sigstore::crypto::KeyPair;
 use sigstore::fulcio::FulcioClient;
@@ -57,10 +56,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Creating attestation for file: {:?}", file_path);
     let artifact_data = fs::read(&file_path)?;
 
-    // Hash the artifact
-    let mut hasher = Sha256::new();
-    hasher.update(&artifact_data);
-    let artifact_hash = hasher.finalize();
+    // Hash the artifact using sigstore-crypto
+    let artifact_hash = sigstore_crypto::sha256(&artifact_data);
     let artifact_hash_hex = hex::encode(artifact_hash);
 
     // 1. OIDC: Get Identity Token

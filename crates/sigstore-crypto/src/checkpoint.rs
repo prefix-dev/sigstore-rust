@@ -300,8 +300,7 @@ impl SignedNote {
 ///
 /// The key hint is the first 4 bytes of SHA-256(public key).
 pub fn compute_key_hint(public_key_der: &[u8]) -> [u8; 4] {
-    use sha2::{Digest, Sha256};
-    let hash = Sha256::digest(public_key_der);
+    let hash = crate::hash::sha256(public_key_der);
     [hash[0], hash[1], hash[2], hash[3]]
 }
 

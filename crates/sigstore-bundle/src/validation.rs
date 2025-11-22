@@ -3,8 +3,8 @@
 //! Validates Sigstore bundles according to version-specific rules.
 
 use crate::error::{Error, Result};
-use sigstore_merkle::{verify_inclusion_proof, HASH_SIZE};
-use sigstore_types::{Bundle, MediaType};
+use sigstore_merkle::verify_inclusion_proof;
+use sigstore_types::{Bundle, MediaType, Sha256Hash};
 
 /// Validation options
 #[derive(Debug, Clone)]
@@ -143,23 +143,13 @@ fn validate_inclusion_proofs(bundle: &Bundle) -> Result<()> {
             })?;
 
             // Decode proof hashes
-            let proof_hashes: Vec<[u8; HASH_SIZE]> = proof
+            let proof_hashes: Vec<Sha256Hash> = proof
                 .hashes
                 .iter()
                 .map(|h| {
-                    let bytes = STANDARD.decode(h).map_err(|e| {
+                    Sha256Hash::from_base64(h).map_err(|e| {
                         Error::Validation(format!("failed to decode proof hash: {}", e))
-                    })?;
-                    if bytes.len() != HASH_SIZE {
-                        return Err(Error::Validation(format!(
-                            "invalid proof hash size: expected {}, got {}",
-                            HASH_SIZE,
-                            bytes.len()
-                        )));
-                    }
-                    let mut arr = [0u8; HASH_SIZE];
-                    arr.copy_from_slice(&bytes);
-                    Ok(arr)
+                    })
                 })
                 .collect::<Result<Vec<_>>>()?;
 
@@ -174,15 +164,8 @@ fn validate_inclusion_proofs(bundle: &Bundle) -> Result<()> {
                 .map_err(|_| Error::Validation("invalid tree_size in proof".to_string()))?;
 
             // Get expected root from checkpoint
-            let mut expected_root = [0u8; HASH_SIZE];
-            if checkpoint.root_hash.len() != HASH_SIZE {
-                return Err(Error::Validation(format!(
-                    "invalid checkpoint root hash size: expected {}, got {}",
-                    HASH_SIZE,
-                    checkpoint.root_hash.len()
-                )));
-            }
-            expected_root.copy_from_slice(&checkpoint.root_hash);
+            let expected_root = Sha256Hash::try_from_slice(&checkpoint.root_hash)
+                .map_err(|e| Error::Validation(format!("invalid checkpoint root hash: {}", e)))?;
 
             // Hash the leaf
             let leaf_hash = sigstore_merkle::hash_leaf(&leaf_data);

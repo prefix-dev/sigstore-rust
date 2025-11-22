@@ -115,18 +115,6 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
     let bundle_path = bundle_path.ok_or("Missing required --bundle")?;
     let artifact_path = artifact_path.ok_or("Missing artifact path")?;
 
-    // Load trusted root if needed for TSA intermediates injection
-    let _trusted_root = if let Some(root_path) = &_trusted_root {
-        Some(TrustedRoot::from_file(root_path)?)
-    } else {
-        // Default to production trusted root when not specified
-        // For staging, we expect the trusted root to be provided via --trusted-root
-        if staging {
-            eprintln!("Warning: Staging mode requested but no trusted root provided. Using production root.");
-        }
-        Some(TrustedRoot::production()?)
-    };
-
     // Parse signing config if present to get URLs
     let (fulcio_url, rekor_url, use_rekor_v2, tsa_url) = if let Some(config_path) = &_signing_config
     {
@@ -254,19 +242,12 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
     use base64::Engine;
     let signature_b64 = base64::engine::general_purpose::STANDARD.encode(signature.as_bytes());
 
-    // Compute artifact hash
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(&artifact_data);
-    let artifact_hash = hasher.finalize();
-
-    // Convert to Sha256Hash type
-    let mut hash_bytes = [0u8; 32];
-    hash_bytes.copy_from_slice(&artifact_hash);
+    // Compute artifact hash using sigstore-crypto
+    let hash_bytes = sigstore_crypto::sha256(&artifact_data);
     let artifact_hash_typed = Sha256Hash::from_bytes(hash_bytes);
 
     // For v2, we still need hex for now
-    let artifact_hash_hex = hex::encode(artifact_hash);
+    let artifact_hash_hex = hex::encode(hash_bytes);
 
     // Upload to Rekor
     let rekor = RekorClient::new(&rekor_url);
@@ -347,27 +328,10 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
         let tsa_client = sigstore::tsa::TimestampClient::new(tsa_url);
 
         // Hash the signature
-        let mut hasher = Sha256::new();
-        hasher.update(signature.as_bytes());
-        let signature_digest = hasher.finalize();
+        let signature_digest = sigstore_crypto::sha256(signature.as_bytes());
 
         // Timestamp the signature digest
         let timestamp_der = tsa_client.timestamp_sha256(&signature_digest).await?;
-
-        // Inject intermediates from trusted root if available
-        /*
-        let timestamp_der = if let Some(root) = &trusted_root {
-            match inject_intermediates(&timestamp_der, root) {
-                Ok(der) => der,
-                Err(e) => {
-                    eprintln!("Warning: Failed to inject intermediates: {}", e);
-                    timestamp_der
-                }
-            }
-        } else {
-            timestamp_der
-        };
-        */
 
         let timestamp_b64 =
             base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &timestamp_der);

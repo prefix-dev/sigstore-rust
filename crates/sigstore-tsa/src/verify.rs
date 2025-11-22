@@ -13,19 +13,17 @@ use cms::cert::CertificateChoices;
 use cms::signed_data::{SignedData, SignerIdentifier};
 use const_oid::ObjectIdentifier;
 use rustls_pki_types::CertificateDer;
+use webpki::{anchor_from_trusted_cert, EndEntityCert, KeyUsage, ALL_VERIFICATION_ALGS};
 use x509_cert::Certificate;
 
-// Re-export webpki from rustls-webpki
-use webpki::{anchor_from_trusted_cert, EndEntityCert, KeyUsage, ALL_VERIFICATION_ALGS};
-
 // TimeStamping Extended Key Usage OID (1.3.6.1.5.5.7.3.8)
-const ID_KP_TIME_STAMPING: &[u8] = &[0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x08];
+const ID_KP_TIME_STAMPING: ObjectIdentifier = const_oid::db::rfc5280::ID_KP_TIME_STAMPING;
 
 // OID for SignedData (1.2.840.113549.1.7.2)
-const ID_SIGNED_DATA_STR: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.2");
+const ID_SIGNED_DATA_STR: ObjectIdentifier = const_oid::db::rfc6268::ID_SIGNED_DATA;
 
 // OID for message-digest attribute (1.2.840.113549.1.9.4)
-const OID_MESSAGE_DIGEST: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.4");
+const OID_MESSAGE_DIGEST: ObjectIdentifier = const_oid::db::rfc6268::ID_MESSAGE_DIGEST;
 
 /// Verification options for RFC 3161 timestamps
 #[derive(Debug, Clone)]
@@ -592,22 +590,6 @@ fn validate_tsa_certificate_chain(
         return Ok(());
     }
 
-    println!("DEBUG: Validating TSA certificate chain");
-    println!(
-        "DEBUG: Signer Subject: {}",
-        signer_cert.tbs_certificate.subject
-    );
-    println!(
-        "DEBUG: Signer Issuer: {}",
-        signer_cert.tbs_certificate.issuer
-    );
-    println!("DEBUG: Number of roots: {}", opts.roots.len());
-    println!(
-        "DEBUG: Number of provided intermediates: {}",
-        opts.intermediates.len()
-    );
-    println!("DEBUG: Number of embedded certs: {}", embedded_certs.len());
-
     // Convert the signer certificate to DER format for webpki
     let signer_cert_der = signer_cert.to_der().map_err(|e| {
         Error::CertificateValidationError(format!(
@@ -646,15 +628,6 @@ fn validate_tsa_certificate_chain(
             continue;
         }
 
-        println!(
-            "DEBUG: Embedded Intermediate Subject: {}",
-            cert.tbs_certificate.subject
-        );
-        println!(
-            "DEBUG: Embedded Intermediate Issuer: {}",
-            cert.tbs_certificate.issuer
-        );
-
         let cert_der = cert.to_der().map_err(|e| {
             Error::CertificateValidationError(format!(
                 "failed to encode embedded certificate to DER: {}",
@@ -690,7 +663,7 @@ fn validate_tsa_certificate_chain(
             &trust_anchors,
             &intermediate_ders,
             verification_time,
-            KeyUsage::required(ID_KP_TIME_STAMPING),
+            KeyUsage::required(ID_KP_TIME_STAMPING.as_bytes()),
             None, // No revocation checking
             None, // No path verification callback
         )

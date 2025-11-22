@@ -1,4 +1,3 @@
-use sha2::{Digest, Sha256};
 use sigstore::bundle::{BundleBuilder, TlogEntryBuilder};
 use sigstore::crypto::KeyPair;
 use sigstore::fulcio::FulcioClient;
@@ -79,14 +78,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 4. Sign the artifact
     println!("Signing artifact...");
 
-    // Hash the artifact data
-    let mut hasher = Sha256::new();
-    hasher.update(&artifact_data);
-    let artifact_hash = hasher.finalize();
-
-    // Convert to Sha256Hash type
-    let mut hash_bytes = [0u8; 32];
-    hash_bytes.copy_from_slice(&artifact_hash);
+    // Hash the artifact data using sigstore-crypto
+    let hash_bytes = sigstore_crypto::sha256(&artifact_data);
     let artifact_hash_typed = Sha256Hash::from_bytes(hash_bytes);
 
     // Sign the artifact data directly

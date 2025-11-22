@@ -4,7 +4,8 @@
 //! - Domain separation via prefixes (0x00 for leaf, 0x01 for node)
 //! - SHA-256 hash function
 
-use sha2::{Digest, Sha256};
+use sigstore_crypto::Sha256Hasher;
+use sigstore_types::Sha256Hash;
 
 /// Prefix for leaf nodes in RFC 6962 Merkle tree
 pub const LEAF_HASH_PREFIX: u8 = 0x00;
@@ -12,28 +13,25 @@ pub const LEAF_HASH_PREFIX: u8 = 0x00;
 /// Prefix for internal nodes in RFC 6962 Merkle tree
 pub const NODE_HASH_PREFIX: u8 = 0x01;
 
-/// Hash size in bytes (SHA-256)
-pub const HASH_SIZE: usize = 32;
-
 /// Hash a leaf node
 ///
 /// Returns: SHA256(0x00 || leaf_data)
-pub fn hash_leaf(data: &[u8]) -> [u8; HASH_SIZE] {
-    let mut hasher = Sha256::new();
-    hasher.update([LEAF_HASH_PREFIX]);
+pub fn hash_leaf(data: &[u8]) -> Sha256Hash {
+    let mut hasher = Sha256Hasher::new();
+    hasher.update(&[LEAF_HASH_PREFIX]);
     hasher.update(data);
-    hasher.finalize().into()
+    Sha256Hash::from_bytes(hasher.finalize())
 }
 
 /// Hash two child nodes to create a parent node
 ///
 /// Returns: SHA256(0x01 || left || right)
-pub fn hash_children(left: &[u8; HASH_SIZE], right: &[u8; HASH_SIZE]) -> [u8; HASH_SIZE] {
-    let mut hasher = Sha256::new();
-    hasher.update([NODE_HASH_PREFIX]);
-    hasher.update(left);
-    hasher.update(right);
-    hasher.finalize().into()
+pub fn hash_children(left: &Sha256Hash, right: &Sha256Hash) -> Sha256Hash {
+    let mut hasher = Sha256Hasher::new();
+    hasher.update(&[NODE_HASH_PREFIX]);
+    hasher.update(left.as_bytes());
+    hasher.update(right.as_bytes());
+    Sha256Hash::from_bytes(hasher.finalize())
 }
 
 /// Calculate the number of trailing zeros in a number (LSB)
@@ -64,22 +62,20 @@ mod tests {
         let hash = hash_leaf(data);
 
         // Verify it's 32 bytes
-        assert_eq!(hash.len(), 32);
+        assert_eq!(hash.as_bytes().len(), 32);
 
         // Verify it's different from raw SHA256
-        let mut raw_hasher = Sha256::new();
-        raw_hasher.update(data);
-        let raw_hash: [u8; 32] = raw_hasher.finalize().into();
-        assert_ne!(hash, raw_hash);
+        let raw_hash = sigstore_crypto::sha256(data);
+        assert_ne!(hash.as_bytes(), &raw_hash);
     }
 
     #[test]
     fn test_hash_children() {
-        let left = [0u8; 32];
-        let right = [1u8; 32];
+        let left = Sha256Hash::from_bytes([0u8; 32]);
+        let right = Sha256Hash::from_bytes([1u8; 32]);
         let hash = hash_children(&left, &right);
 
-        assert_eq!(hash.len(), 32);
+        assert_eq!(hash.as_bytes().len(), 32);
 
         // Verify order matters
         let hash_reversed = hash_children(&right, &left);
