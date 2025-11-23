@@ -292,21 +292,12 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
         }
 
         if let Some(proof) = &verification.inclusion_proof {
-            // The hashes are already base64 encoded (Base64Hash type)
-            let hashes_base64: Vec<String> = proof
-                .hashes
-                .iter()
-                .map(|h| h.as_str().to_string())
-                .collect();
-
-            // The root hash is also already base64 encoded (Base64Hash type)
-            let root_hash_base64 = proof.root_hash.as_str().to_string();
-
+            // The hashes and root_hash are already Base64Hash types
             tlog_builder = tlog_builder.inclusion_proof(
                 proof.log_index as u64,
-                root_hash_base64,
+                proof.root_hash.clone(),
                 proof.tree_size as u64,
-                hashes_base64,
+                proof.hashes.clone(),
                 proof.checkpoint.clone(),
             );
         }

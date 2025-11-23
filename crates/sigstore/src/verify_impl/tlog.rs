@@ -92,16 +92,17 @@ pub fn verify_checkpoint(
     // Verify that the checkpoint's root hash matches the inclusion proof's root hash
     let checkpoint_root_hash = &signed_note.checkpoint.root_hash;
 
-    // Decode the base64-encoded root hash from the inclusion proof
-    let proof_root_hash = inclusion_proof.root_hash.decode().map_err(|e| {
-        Error::Verification(format!("Failed to decode inclusion proof root hash: {}", e))
-    })?;
+    // Decode the root hash from the inclusion proof (auto-detects hex or base64 format)
+    let proof_root_hash = sigstore_types::Sha256Hash::from_base64_ref(&inclusion_proof.root_hash)
+        .map_err(|e| {
+            Error::Verification(format!("Failed to decode inclusion proof root hash: {}", e))
+        })?;
 
-    if checkpoint_root_hash != &proof_root_hash {
+    if checkpoint_root_hash.as_slice() != proof_root_hash.as_slice() {
         return Err(Error::Verification(format!(
-            "Checkpoint root hash mismatch: checkpoint has {} bytes, inclusion proof has {} bytes",
-            checkpoint_root_hash.len(),
-            proof_root_hash.len()
+            "Checkpoint root hash mismatch: expected {}, got {}",
+            hex::encode(checkpoint_root_hash),
+            proof_root_hash.to_hex()
         )));
     }
 

@@ -6,7 +6,7 @@ use sigstore_types::{
         Rfc3161Timestamp, SignatureContent, TimestampVerificationData, TransparencyLogEntry,
         VerificationMaterial, VerificationMaterialContent,
     },
-    Bundle, DsseEnvelope, MediaType,
+    Base64Hash, Bundle, DsseEnvelope, MediaType,
 };
 
 /// Builder for creating Sigstore bundles
@@ -197,19 +197,26 @@ impl TlogEntryBuilder {
     }
 
     /// Set the inclusion proof
+    ///
+    /// # Arguments
+    /// * `log_index` - The log index
+    /// * `root_hash` - The root hash (base64 encoded)
+    /// * `tree_size` - The tree size
+    /// * `hashes` - The proof hashes (base64 encoded)
+    /// * `checkpoint` - The checkpoint envelope
     pub fn inclusion_proof(
         mut self,
         log_index: u64,
-        root_hash: String,
+        root_hash: impl Into<Base64Hash>,
         tree_size: u64,
-        hashes: Vec<String>,
+        hashes: Vec<Base64Hash>,
         checkpoint: String,
     ) -> Self {
         self.inclusion_proof = Some(InclusionProof {
             log_index: log_index.to_string().into(),
             root_hash: root_hash.into(),
             tree_size: tree_size.to_string(),
-            hashes: hashes.into_iter().map(|h| h.into()).collect(),
+            hashes,
             checkpoint: CheckpointData {
                 envelope: checkpoint,
             },

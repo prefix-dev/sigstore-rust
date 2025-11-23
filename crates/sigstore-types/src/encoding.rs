@@ -434,6 +434,19 @@ impl Sha256Hash {
         Self::try_from_slice(&bytes)
     }
 
+    /// Parse from hex or base64 string (auto-detect format)
+    ///
+    /// Tries hex first (if length is 64 chars), then falls back to base64.
+    /// This handles compatibility with different sigstore implementations.
+    pub fn from_hex_or_base64(s: &str) -> Result<Self> {
+        // Try hex if it looks like a hex string (64 chars, all hex digits)
+        if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Self::from_hex(&Hex(s.to_string()));
+        }
+        // Otherwise try base64
+        Self::from_base64(s)
+    }
+
     /// Encode as hex string (lowercase)
     pub fn to_hex(&self) -> String {
         hex::encode(self.0)
@@ -455,8 +468,10 @@ impl Sha256Hash {
     }
 
     /// Decode from a Base64Hash wrapper
+    ///
+    /// Auto-detects hex vs base64 format for compatibility
     pub fn from_base64_ref(b64: &Base64Hash) -> Result<Self> {
-        Self::try_from_slice(&b64.decode()?)
+        Self::from_hex_or_base64(b64.as_str())
     }
 }
 
@@ -487,7 +502,8 @@ impl<'de> serde::Deserialize<'de> for Sha256Hash {
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        Sha256Hash::from_base64(&s).map_err(serde::de::Error::custom)
+        // Auto-detect hex or base64 format for compatibility
+        Sha256Hash::from_hex_or_base64(&s).map_err(serde::de::Error::custom)
     }
 }
 
