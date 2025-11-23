@@ -56,12 +56,14 @@ impl Checkpoint {
         let origin = lines
             .next()
             .ok_or_else(|| Error::InvalidCheckpoint("missing origin".to_string()))?
+            .trim()
             .to_string();
 
         // Parse tree size
         let tree_size_str = lines
             .next()
-            .ok_or_else(|| Error::InvalidCheckpoint("missing tree size".to_string()))?;
+            .ok_or_else(|| Error::InvalidCheckpoint("missing tree size".to_string()))?
+            .trim();
         let tree_size = tree_size_str
             .parse()
             .map_err(|_| Error::InvalidCheckpoint("invalid tree size".to_string()))?;
@@ -69,7 +71,8 @@ impl Checkpoint {
         // Parse root hash
         let root_hash_b64 = lines
             .next()
-            .ok_or_else(|| Error::InvalidCheckpoint("missing root hash".to_string()))?;
+            .ok_or_else(|| Error::InvalidCheckpoint("missing root hash".to_string()))?
+            .trim();
         let root_hash_bytes = STANDARD
             .decode(root_hash_b64)
             .map_err(|_| Error::InvalidCheckpoint("invalid root hash base64".to_string()))?;

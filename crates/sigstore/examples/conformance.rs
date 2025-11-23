@@ -292,20 +292,15 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
         }
 
         if let Some(proof) = &verification.inclusion_proof {
+            // The hashes are already base64 encoded (Base64Hash type)
             let hashes_base64: Vec<String> = proof
                 .hashes
                 .iter()
-                .map(|h| {
-                    let bytes = hex::decode(h).unwrap_or_default();
-                    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes)
-                })
+                .map(|h| h.as_str().to_string())
                 .collect();
 
-            let root_hash_bytes = hex::decode(&proof.root_hash).unwrap_or_default();
-            let root_hash_base64 = base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                &root_hash_bytes,
-            );
+            // The root hash is also already base64 encoded (Base64Hash type)
+            let root_hash_base64 = proof.root_hash.as_str().to_string();
 
             tlog_builder = tlog_builder.inclusion_proof(
                 proof.log_index as u64,
