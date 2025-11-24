@@ -19,8 +19,15 @@ const HAPPY_PATH_V03_BUNDLE_DSSE: &str =
 // Test bundles from reference implementations
 const DSSE_BUNDLE: &str = include_str!("../test_data/bundles/dsse.sigstore.json");
 const DSSE_2SIGS_BUNDLE: &str = include_str!("../test_data/bundles/dsse-2sigs.sigstore.json");
-const BUNDLE_INVALID_VERSION: &str = include_str!("../test_data/bundles/bundle_invalid_version.txt.sigstore");
-const BUNDLE_CVE_2022_36056: &str = include_str!("../test_data/bundles/bundle_cve_2022_36056.txt.sigstore");
+const BUNDLE_INVALID_VERSION: &str =
+    include_str!("../test_data/bundles/bundle_invalid_version.txt.sigstore");
+const BUNDLE_CVE_2022_36056: &str =
+    include_str!("../test_data/bundles/bundle_cve_2022_36056.txt.sigstore");
+// GitHub Actions provenance bundle (SLSA attestation) - from sigstore-go test data
+const SIGSTORE_JS_PROVENANCE: &str =
+    include_str!("../test_data/bundles/sigstore.js@2.0.0-provenance.sigstore.json");
+// Bundle with otherName SAN (non-standard SAN type) - from sigstore-go test data
+const OTHERNAME_BUNDLE: &str = include_str!("../test_data/bundles/othername.sigstore.json");
 
 // ==== Bundle Parsing Tests ====
 
