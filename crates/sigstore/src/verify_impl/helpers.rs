@@ -269,6 +269,14 @@ pub fn verify_certificate_chain(
     // Get the issuer from the EE certificate
     let ee_issuer = &ee_cert.tbs_certificate.issuer;
 
+    // Extract the original TBS DER bytes from the certificate
+    // CRITICAL: We must use the original DER bytes, not re-serialize, because
+    // re-serialization can produce different bytes even if semantically equivalent,
+    // which will break signature verification.
+    let tbs_der = extract_tbs_der(cert_der).map_err(|e| {
+        Error::Verification(format!("failed to extract TBS certificate bytes: {}", e))
+    })?;
+
     // Try to find a matching Fulcio root by comparing issuers
     let mut found_issuer = false;
     for fulcio_cert_der in &fulcio_certs {
@@ -278,27 +286,40 @@ pub fn verify_certificate_chain(
             // Check if the EE certificate's issuer matches this Fulcio cert's subject
             if ee_issuer == fulcio_subject {
                 // Verify the signature
-                let tbs_der = match ee_cert.tbs_certificate.to_der() {
-                    Ok(der) => der,
-                    Err(_) => continue,
-                };
-
                 let Some(signature) = ee_cert.signature.as_bytes() else {
                     continue;
                 };
 
+                // Determine the signing scheme by combining:
+                // 1. The curve from the issuer's public key (SPKI)
+                // 2. The hash algorithm from the signature algorithm OID
                 let sig_alg_oid = ee_cert.signature_algorithm.oid;
-                let scheme = if sig_alg_oid == const_oid::ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2") {
-                    // ecdsa-with-SHA256
-                    sigstore_crypto::SigningScheme::EcdsaP256Sha256
-                } else if sig_alg_oid == const_oid::ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.3") {
-                    // ecdsa-with-SHA384
-                    sigstore_crypto::SigningScheme::EcdsaP384Sha384
-                } else {
-                    continue;
+
+                // Get the curve from the issuer's public key
+                let issuer_spki = &fulcio_cert.tbs_certificate.subject_public_key_info;
+                let curve_oid = match extract_ec_curve_oid(issuer_spki) {
+                    Ok(oid) => oid,
+                    Err(_) => continue,
                 };
 
-                let issuer_spki = &fulcio_cert.tbs_certificate.subject_public_key_info;
+                // Map (curve, hash) to SigningScheme
+                let scheme = match (curve_oid.as_str(), sig_alg_oid) {
+                    // P-256 with SHA-256
+                    ("1.2.840.10045.3.1.7", oid) if oid == const_oid::ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2") => {
+                        sigstore_crypto::SigningScheme::EcdsaP256Sha256
+                    }
+                    // P-256 with SHA-384 (non-standard but valid)
+                    // Some test/mock certificates may use this combination
+                    ("1.2.840.10045.3.1.7", oid) if oid == const_oid::ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.3") => {
+                        sigstore_crypto::SigningScheme::EcdsaP256Sha384
+                    }
+                    // P-384 with SHA-384
+                    ("1.3.132.0.34", oid) if oid == const_oid::ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.3") => {
+                        sigstore_crypto::SigningScheme::EcdsaP384Sha384
+                    }
+                    _ => continue,
+                };
+
                 let Some(issuer_pub_key) = issuer_spki.subject_public_key.as_bytes() else {
                     continue;
                 };
@@ -322,6 +343,86 @@ pub fn verify_certificate_chain(
     validate_certificate_time(_validation_time, &cert_info)?;
 
     Ok(())
+}
+
+/// Extract the EC curve OID from a SubjectPublicKeyInfo
+///
+/// For EC keys, the algorithm parameters contain the curve OID
+fn extract_ec_curve_oid(spki: &x509_cert::spki::SubjectPublicKeyInfoOwned) -> Result<String> {
+    use x509_cert::der::Decode;
+
+    // For EC keys, the algorithm OID should be id-ecPublicKey (1.2.840.10045.2.1)
+    let ec_public_key_oid = const_oid::ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
+    if spki.algorithm.oid != ec_public_key_oid {
+        return Err(Error::Verification("Not an EC public key".to_string()));
+    }
+
+    // The parameters field contains the curve OID
+    let Some(params) = &spki.algorithm.parameters else {
+        return Err(Error::Verification("EC public key missing curve parameters".to_string()));
+    };
+
+    // The parameters are an ANY type that encodes a complete DER-encoded OID
+    // We can directly decode it as an ObjectIdentifier since ANY preserves the DER encoding
+    let params_der = params.to_der()
+        .map_err(|e| Error::Verification(format!("failed to encode parameters: {}", e)))?;
+
+    let curve_oid = const_oid::ObjectIdentifier::from_der(&params_der)
+        .map_err(|e| Error::Verification(format!("failed to decode curve OID: {}", e)))?;
+
+    Ok(curve_oid.to_string())
+}
+
+/// Extract the original TBS (To Be Signed) certificate DER bytes from a certificate
+///
+/// CRITICAL: This extracts the original DER bytes without re-parsing and re-serializing,
+/// which is necessary for correct signature verification.
+fn extract_tbs_der(cert_der: &[u8]) -> Result<Vec<u8>> {
+    use x509_cert::der::{Decode, Reader, SliceReader};
+
+    // A Certificate is a SEQUENCE containing:
+    // 1. TBSCertificate (SEQUENCE)
+    // 2. signatureAlgorithm (SEQUENCE)
+    // 3. signatureValue (BIT STRING)
+    //
+    // We need to extract the raw bytes of the TBSCertificate element.
+
+    let mut reader = SliceReader::new(cert_der)
+        .map_err(|e| Error::Verification(format!("failed to create DER reader: {}", e)))?;
+
+    // Decode the outer SEQUENCE header
+    let outer_header = x509_cert::der::Header::decode(&mut reader)
+        .map_err(|e| Error::Verification(format!("failed to decode certificate header: {}", e)))?;
+
+    // The remaining bytes should be the certificate contents
+    let cert_contents = reader.read_slice(outer_header.length)
+        .map_err(|e| Error::Verification(format!("failed to read certificate contents: {}", e)))?;
+
+    // Now decode the TBS header from the certificate contents
+    let mut tbs_reader = SliceReader::new(cert_contents)
+        .map_err(|e| Error::Verification(format!("failed to create TBS reader: {}", e)))?;
+
+    let tbs_header = x509_cert::der::Header::decode(&mut tbs_reader)
+        .map_err(|e| Error::Verification(format!("failed to decode TBS header: {}", e)))?;
+
+    // Calculate the total length of the TBS including its header
+    let header_len: usize = tbs_header.encoded_len()
+        .map_err(|e| Error::Verification(format!("failed to encode TBS header length: {}", e)))?
+        .try_into()
+        .map_err(|_| Error::Verification("TBS header length too large".to_string()))?;
+
+    let body_len: usize = tbs_header.length.try_into()
+        .map_err(|_| Error::Verification("TBS body length too large".to_string()))?;
+
+    let tbs_total_len = header_len.checked_add(body_len)
+        .ok_or_else(|| Error::Verification("TBS length calculation overflow".to_string()))?;
+
+    // Extract the TBS bytes (header + body)
+    if tbs_total_len > cert_contents.len() {
+        return Err(Error::Verification("TBS length exceeds certificate contents".to_string()));
+    }
+
+    Ok(cert_contents[..tbs_total_len].to_vec())
 }
 
 /// Verify the Signed Certificate Timestamp (SCT) embedded in the certificate
@@ -457,9 +558,6 @@ pub fn verify_sct(
     }
 
     if !verified_any {
-        // TODO: Make this error fatal once SCT verification is fully working
-        // For now, log a warning but don't fail verification
-        eprintln!("Warning: no valid SCT could be verified against trusted CT logs");
         return Err(Error::Verification(
             "no valid SCT could be verified against trusted CT logs".to_string(),
         ));

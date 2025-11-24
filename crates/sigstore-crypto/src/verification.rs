@@ -3,7 +3,7 @@
 use crate::error::{Error, Result};
 use crate::signing::SigningScheme;
 use aws_lc_rs::signature::{
-    UnparsedPublicKey, ECDSA_P256_SHA256_ASN1, ECDSA_P384_SHA384_ASN1, ED25519,
+    UnparsedPublicKey, ECDSA_P256_SHA256_ASN1, ECDSA_P256_SHA384_ASN1, ECDSA_P384_SHA384_ASN1, ED25519,
     RSA_PKCS1_2048_8192_SHA256, RSA_PKCS1_2048_8192_SHA384, RSA_PKCS1_2048_8192_SHA512,
     RSA_PSS_2048_8192_SHA256, RSA_PSS_2048_8192_SHA384, RSA_PSS_2048_8192_SHA512,
 };
@@ -28,12 +28,17 @@ impl VerificationKey {
             SigningScheme::EcdsaP256Sha256 => {
                 let key = UnparsedPublicKey::new(&ECDSA_P256_SHA256_ASN1, &self.bytes);
                 key.verify(data, signature)
-                    .map_err(|_| Error::Verification("ECDSA P-256 signature invalid".to_string()))
+                    .map_err(|_| Error::Verification("ECDSA P-256 SHA-256 signature invalid".to_string()))
+            }
+            SigningScheme::EcdsaP256Sha384 => {
+                let key = UnparsedPublicKey::new(&ECDSA_P256_SHA384_ASN1, &self.bytes);
+                key.verify(data, signature)
+                    .map_err(|_| Error::Verification("ECDSA P-256 SHA-384 signature invalid".to_string()))
             }
             SigningScheme::EcdsaP384Sha384 => {
                 let key = UnparsedPublicKey::new(&ECDSA_P384_SHA384_ASN1, &self.bytes);
                 key.verify(data, signature)
-                    .map_err(|_| Error::Verification("ECDSA P-384 signature invalid".to_string()))
+                    .map_err(|_| Error::Verification("ECDSA P-384 SHA-384 signature invalid".to_string()))
             }
             SigningScheme::Ed25519 => {
                 let key = UnparsedPublicKey::new(&ED25519, &self.bytes);

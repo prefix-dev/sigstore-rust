@@ -112,6 +112,8 @@ impl AsRef<[u8]> for Signature {
 pub enum SigningScheme {
     /// ECDSA P-256 with SHA-256
     EcdsaP256Sha256,
+    /// ECDSA P-256 with SHA-384 (non-standard but valid)
+    EcdsaP256Sha384,
     /// ECDSA P-384 with SHA-384
     EcdsaP384Sha384,
     /// Ed25519
@@ -135,6 +137,7 @@ impl SigningScheme {
     pub fn name(&self) -> &'static str {
         match self {
             SigningScheme::EcdsaP256Sha256 => "ECDSA_P256_SHA256",
+            SigningScheme::EcdsaP256Sha384 => "ECDSA_P256_SHA384",
             SigningScheme::EcdsaP384Sha384 => "ECDSA_P384_SHA384",
             SigningScheme::Ed25519 => "ED25519",
             SigningScheme::RsaPssSha256 => "RSA_PSS_SHA256",
