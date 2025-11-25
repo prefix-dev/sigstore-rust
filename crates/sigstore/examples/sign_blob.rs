@@ -89,8 +89,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Uploading to Rekor...");
     let rekor = RekorClient::public();
 
-    // Create hashedrekord entry
-    let hashed_rekord = HashedRekord::new(&artifact_hash_typed, &signature, &public_key_pem);
+    // Create hashedrekord entry with certificate (not public key) for identity verification
+    let cert_as_pem = sigstore_crypto::PublicKeyPem::new(leaf_cert_pem.to_string());
+    let hashed_rekord = HashedRekord::new(&artifact_hash_typed, &signature, &cert_as_pem);
 
     let log_entry = rekor.create_entry(hashed_rekord).await?;
     println!("Created Rekor entry with index: {}", log_entry.log_index);
@@ -102,14 +103,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // This automatically extracts log_id, inclusion_promise, inclusion_proof, etc.
     let tlog_entry = TlogEntryBuilder::from_log_entry(&log_entry, "hashedrekord", "0.0.1").build();
 
-    // Convert signature to base64 for bundle
+    // Convert signature and digest to base64 for bundle
     use base64::Engine;
     let signature_b64 = base64::engine::general_purpose::STANDARD.encode(signature.as_bytes());
+    let digest_b64 = base64::engine::general_purpose::STANDARD.encode(hash_bytes);
 
     let bundle = BundleBuilder::new()
         .version(MediaType::Bundle0_3)
         .certificate(leaf_cert_der_b64)
-        .message_signature(signature_b64)
+        .message_signature_with_digest(
+            signature_b64,
+            digest_b64,
+            sigstore_types::HashAlgorithm::Sha2256,
+        )
         .add_tlog_entry(tlog_entry)
         .build()
         .map_err(|e| format!("Failed to build bundle: {}", e))?;

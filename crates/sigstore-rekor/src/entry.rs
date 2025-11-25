@@ -49,6 +49,7 @@ pub struct InclusionProof {
     /// Checkpoint (signed tree head)
     pub checkpoint: String,
     /// Hashes in the proof path
+    /// TODO: are these hex encoded, not base64?
     pub hashes: Vec<Base64Hash>,
     /// Log index
     pub log_index: i64,

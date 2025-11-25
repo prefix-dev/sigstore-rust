@@ -1,5 +1,7 @@
 //! Bundle builder for creating Sigstore bundles
 
+use base64::Engine;
+use hex::ToHex;
 use sigstore_rekor::entry::LogEntry;
 use sigstore_types::{
     bundle::{
@@ -85,10 +87,27 @@ impl BundleBuilder {
         self
     }
 
-    /// Set the message signature
+    /// Set the message signature (without digest - prefer `message_signature_with_digest` for better compatibility)
     pub fn message_signature(mut self, signature: String) -> Self {
         self.signature_content = Some(SignatureContent::MessageSignature(MessageSignature {
             message_digest: None,
+            signature: signature.into(),
+        }));
+        self
+    }
+
+    /// Set the message signature with digest (recommended for cosign compatibility)
+    pub fn message_signature_with_digest(
+        mut self,
+        signature: String,
+        digest: impl Into<Base64Hash>,
+        algorithm: sigstore_types::HashAlgorithm,
+    ) -> Self {
+        self.signature_content = Some(SignatureContent::MessageSignature(MessageSignature {
+            message_digest: Some(sigstore_types::bundle::MessageDigest {
+                algorithm,
+                digest: digest.into(),
+            }),
             signature: signature.into(),
         }));
         self
@@ -191,11 +210,28 @@ impl TlogEntryBuilder {
             }
 
             if let Some(proof) = &verification.inclusion_proof {
+                // Rekor V1 API returns hashes as hex, but bundle format expects base64
+                // Convert root_hash from hex to base64
+                // TODO: refactor to do serialization / conversion at Serde boundary because this sucks.
+                let root_hash_b64 = hex_to_base64(proof.root_hash.as_str())
+                    .unwrap_or_else(|_| proof.root_hash.to_string());
+
+                // Convert all proof hashes from hex to base64
+                let hashes_b64: Vec<Base64Hash> = proof
+                    .hashes
+                    .iter()
+                    .map(|h| {
+                        hex_to_base64(h.as_str())
+                            .map(|s| s.into())
+                            .unwrap_or_else(|_| h.clone())
+                    })
+                    .collect();
+
                 builder.inclusion_proof = Some(InclusionProof {
                     log_index: proof.log_index.to_string().into(),
-                    root_hash: proof.root_hash.clone(),
+                    root_hash: root_hash_b64.into(),
                     tree_size: proof.tree_size.to_string(),
-                    hashes: proof.hashes.clone(),
+                    hashes: hashes_b64,
                     checkpoint: CheckpointData {
                         envelope: proof.checkpoint.clone(),
                     },
@@ -280,4 +316,12 @@ impl Default for TlogEntryBuilder {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Convert a hex string to base64
+///
+/// The Rekor V1 API returns hashes as hex, but the bundle format expects base64.
+fn hex_to_base64(hex_str: &str) -> Result<String, &'static str> {
+    let bytes = hex::decode(hex_str).map_err(|_| "invalid hex")?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
