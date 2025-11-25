@@ -54,6 +54,7 @@ pub struct InclusionProof {
     /// Log index
     pub log_index: i64,
     /// Root hash
+    /// TODO: is this hex encoded, not base64?
     pub root_hash: Base64Hash,
     /// Tree size
     pub tree_size: i64,
