@@ -199,7 +199,7 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
     let chain_pem = cert_response
         .certificate_chain()
         .ok_or("No certificate chain in response")?;
-    let mut chain_der_b64 = Vec::new();
+    let mut chain_der_bytes = Vec::new();
     for cert_pem in chain_pem {
         let der_b64 = pem_to_der_base64(cert_pem)?;
         let der = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &der_b64)?;
@@ -232,13 +232,13 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
             }
         }
 
-        chain_der_b64.push(der_b64);
+        chain_der_bytes.push(der);
     }
 
     // Sign the artifact
     let signature = key_pair.sign(&artifact_data)?;
 
-    // Convert signature to base64 for bundle
+    // For Rekor V2 API, signature needs to be base64-encoded
     use base64::Engine;
     let signature_b64 = base64::engine::general_purpose::STANDARD.encode(signature.as_bytes());
 
@@ -272,8 +272,8 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
 
     let mut bundle_builder = BundleBuilder::new()
         .version(MediaType::Bundle0_2)
-        .certificate_chain(chain_der_b64)
-        .message_signature(signature_b64.clone())
+        .certificate_chain(chain_der_bytes)
+        .message_signature(signature.as_bytes().to_vec())
         .add_tlog_entry(tlog_entry);
 
     if let Some(tsa_url) = tsa_url {
@@ -286,9 +286,7 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
         // Timestamp the signature digest
         let timestamp_der = tsa_client.timestamp_sha256(&signature_digest).await?;
 
-        let timestamp_b64 =
-            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &timestamp_der);
-        bundle_builder = bundle_builder.add_rfc3161_timestamp(timestamp_b64);
+        bundle_builder = bundle_builder.add_rfc3161_timestamp(timestamp_der);
     } else {
         // eprintln!("No TSA URL found in signing config");
     }
@@ -410,11 +408,8 @@ fn verify_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             SignatureContent::MessageSignature(msg_sig) => {
                 // For message signatures, check if there's a message digest
                 if let Some(digest) = &msg_sig.message_digest {
-                    base64::Engine::decode(
-                        &base64::engine::general_purpose::STANDARD,
-                        &digest.digest,
-                    )
-                    .map_err(|e| format!("Failed to decode message digest: {}", e))?
+                    // digest.digest is already raw bytes (Sha256Hash)
+                    digest.digest.as_bytes().to_vec()
                 } else {
                     return Err("Bundle does not contain message digest for verification".into());
                 }
@@ -422,12 +417,9 @@ fn verify_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             SignatureContent::DsseEnvelope(envelope) => {
                 // For DSSE, extract from in-toto statement
                 if envelope.payload_type == "application/vnd.in-toto+json" {
-                    let payload_bytes = base64::Engine::decode(
-                        &base64::engine::general_purpose::STANDARD,
-                        &envelope.payload,
-                    )
-                    .map_err(|e| format!("Failed to decode payload: {}", e))?;
-                    let payload_str = String::from_utf8(payload_bytes)
+                    // envelope.payload is already raw bytes (PayloadBytes)
+                    let payload_bytes = envelope.payload.as_bytes();
+                    let payload_str = String::from_utf8(payload_bytes.to_vec())
                         .map_err(|e| format!("Invalid UTF-8 in payload: {}", e))?;
                     let statement: serde_json::Value = serde_json::from_str(&payload_str)
                         .map_err(|e| format!("Failed to parse statement: {}", e))?;

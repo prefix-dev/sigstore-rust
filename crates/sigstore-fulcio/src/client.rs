@@ -3,7 +3,7 @@
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use sigstore_crypto::{PublicKeyPem, Signature};
-use sigstore_types::Base64Signature;
+use sigstore_types::SignatureBytes;
 
 /// A client for interacting with Fulcio
 pub struct FulcioClient {
@@ -177,7 +177,7 @@ pub struct PublicKeyRequest {
     /// Public key
     pub public_key: PublicKeyData,
     /// Proof of possession (signature)
-    pub proof_of_possession: Base64Signature,
+    pub proof_of_possession: SignatureBytes,
 }
 
 /// Public key data for API requests

@@ -191,9 +191,10 @@ impl RekorClient {
                 .inclusion_proof
                 .map(|p| crate::entry::InclusionProof {
                     checkpoint: p.checkpoint.envelope,
-                    hashes: p.hashes.clone(),
+                    // Convert Sha256Hash to hex strings (V1 format)
+                    hashes: p.hashes.iter().map(|h| h.to_hex()).collect(),
                     log_index: p.log_index.parse::<i64>().unwrap_or_default(),
-                    root_hash: p.root_hash,
+                    root_hash: p.root_hash.to_hex(),
                     tree_size: p.tree_size.parse::<i64>().unwrap_or_default(),
                 }),
             signed_entry_timestamp: entry_v2.inclusion_promise.map(|p| p.signed_entry_timestamp),

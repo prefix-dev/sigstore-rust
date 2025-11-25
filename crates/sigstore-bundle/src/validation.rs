@@ -135,22 +135,11 @@ fn validate_inclusion_proofs(bundle: &Bundle) -> Result<()> {
                 .parse()
                 .map_err(|e| Error::Validation(format!("failed to parse checkpoint: {}", e)))?;
 
-            // Decode the leaf (canonicalized body)
-            let leaf_data = entry.canonicalized_body.decode().map_err(|e| {
-                Error::Validation(format!("failed to decode canonicalized body: {}", e))
-            })?;
+            // Get the leaf (canonicalized body) bytes
+            let leaf_data = entry.canonicalized_body.as_bytes();
 
-            // Decode proof hashes (filter out empty hashes which shouldn't be present but handle gracefully)
-            let proof_hashes: Vec<Sha256Hash> = proof
-                .hashes
-                .iter()
-                .filter(|h| !h.as_str().is_empty())
-                .map(|h| {
-                    Sha256Hash::from_base64_ref(h).map_err(|e| {
-                        Error::Validation(format!("failed to decode proof hash: {}", e))
-                    })
-                })
-                .collect::<Result<Vec<_>>>()?;
+            // Get proof hashes (already decoded as Vec<Sha256Hash>)
+            let proof_hashes: &[Sha256Hash] = &proof.hashes;
 
             // Parse indices
             let leaf_index: u64 = proof

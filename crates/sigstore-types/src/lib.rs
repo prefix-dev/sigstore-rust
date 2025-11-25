@@ -13,14 +13,15 @@ pub mod intoto;
 
 pub use bundle::{
     Bundle, BundleVersion, CheckpointData, InclusionPromise, InclusionProof, KindVersion, LogId,
-    MediaType, MessageSignature, SignatureContent, TransparencyLogEntry, VerificationMaterial,
+    MediaType, MessageDigest, MessageSignature, SignatureContent, TransparencyLogEntry,
+    VerificationMaterial,
 };
 pub use checkpoint::{Checkpoint, CheckpointSignature};
 pub use dsse::{pae, DsseEnvelope, DsseSignature};
 pub use encoding::{
-    Base64, Base64Body, Base64Der, Base64Hash, Base64Payload, Base64Pem, Base64Signature,
-    Base64Timestamp, Body, Der, EntryUuid, Hash, Hex, HexLogId, KeyId, LogIndex, LogKeyId, Payload,
-    Pem, Sha256Hash, Signature, Timestamp, Unknown,
+    base64_bytes, base64_bytes_option, hex_bytes, CanonicalizedBody, DerCertificate, DerPublicKey,
+    EntryUuid, HexHash, HexLogId, KeyId, LogIndex, LogKeyId, PayloadBytes, PemContent, Sha256Hash,
+    SignatureBytes, SignedTimestamp, TimestampToken,
 };
 pub use error::{Error, Result};
 pub use hash::{HashAlgorithm, HashOutput, MessageImprint};

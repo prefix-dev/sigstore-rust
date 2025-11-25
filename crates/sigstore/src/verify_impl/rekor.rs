@@ -45,7 +45,7 @@ fn verify_dsse_v001(
     bundle: &Bundle,
 ) -> Result<()> {
     let body = RekorEntryBody::from_base64_json(
-        entry.canonicalized_body.as_str(),
+        &entry.canonicalized_body.to_base64(),
         &entry.kind_version.kind,
         &entry.kind_version.version,
     )
@@ -64,10 +64,7 @@ fn verify_dsse_v001(
     };
 
     // Verify payload hash (v0.0.1 uses hex encoding)
-    let payload_bytes = envelope
-        .payload
-        .decode()
-        .map_err(|e| Error::Verification(format!("failed to decode DSSE payload: {}", e)))?;
+    let payload_bytes = envelope.payload.as_bytes();
     let payload_hash = sigstore_crypto::sha256(&payload_bytes);
     let payload_hash_hex = hex::encode(payload_hash);
 
@@ -81,8 +78,7 @@ fn verify_dsse_v001(
     // Extract the signing certificate from the bundle
     let cert_der = super::helpers::extract_certificate_der(&bundle.verification_material.content)?;
 
-    // Convert DER certificate to PEM format and base64 encode it
-    // This matches what Python does: base64_encode_pem_cert(bundle.signing_certificate)
+    // Convert DER certificate to PEM format
     // Use x509-cert crate for proper PEM encoding
     use x509_cert::der::Decode;
     use x509_cert::der::EncodePem;
@@ -95,7 +91,6 @@ fn verify_dsse_v001(
     let cert_pem_str = cert
         .to_pem(x509_cert::der::pem::LineEnding::LF)
         .map_err(|e| Error::Verification(format!("failed to encode certificate as PEM: {}", e)))?;
-    let cert_pem_b64 = base64::engine::general_purpose::STANDARD.encode(cert_pem_str.as_bytes());
 
     // Verify that the signatures in the bundle match what's in Rekor
     // This prevents signature substitution attacks
@@ -114,9 +109,11 @@ fn verify_dsse_v001(
         let mut found = false;
         for rekor_sig in rekor_signatures {
             // Compare both signature bytes AND the verifier (certificate)
-            // The signature field in the bundle is base64-encoded, same as in Rekor
-            // The verifier field contains the base64-encoded PEM certificate
-            if bundle_sig.sig == rekor_sig.signature && cert_pem_b64 == rekor_sig.verifier {
+            // The signature field in the bundle is SignatureBytes, compare as bytes
+            // The verifier field is PemContent - already decoded from base64, contains PEM text bytes
+            if bundle_sig.sig.as_bytes() == rekor_sig.signature.as_bytes()
+                && cert_pem_str.as_bytes() == rekor_sig.verifier.as_bytes()
+            {
                 found = true;
                 break;
             }
@@ -138,7 +135,7 @@ fn verify_dsse_v002(
     bundle: &Bundle,
 ) -> Result<()> {
     let body = RekorEntryBody::from_base64_json(
-        entry.canonicalized_body.as_str(),
+        &entry.canonicalized_body.to_base64(),
         &entry.kind_version.kind,
         &entry.kind_version.version,
     )
@@ -157,24 +154,20 @@ fn verify_dsse_v002(
     };
 
     // Compute actual payload hash
-    let payload_bytes = envelope
-        .payload
-        .decode()
-        .map_err(|e| Error::Verification(format!("failed to decode DSSE payload: {}", e)))?;
-    let payload_hash = sigstore_crypto::sha256(&payload_bytes);
-    let payload_hash_b64 = base64::engine::general_purpose::STANDARD.encode(payload_hash);
+    let payload_bytes = envelope.payload.as_bytes();
+    let payload_hash = sigstore_crypto::sha256(payload_bytes);
 
-    // Compare hashes
-    if &payload_hash_b64 != expected_hash {
+    // Compare hashes (expected_hash is Vec<u8>)
+    if payload_hash.as_slice() != expected_hash.as_slice() {
         return Err(Error::Verification(format!(
             "DSSE payload hash mismatch: computed {}, expected {}",
-            payload_hash_b64, expected_hash
+            hex::encode(&payload_hash),
+            hex::encode(expected_hash)
         )));
     }
 
-    // Extract the signing certificate from the bundle (DER format, base64-encoded)
+    // Extract the signing certificate from the bundle (DER bytes)
     let cert_der = super::helpers::extract_certificate_der(&bundle.verification_material.content)?;
-    let cert_der_b64 = base64::engine::general_purpose::STANDARD.encode(&cert_der);
 
     // Verify that the signatures in the bundle match what's in Rekor
     // This prevents signature substitution attacks
@@ -194,10 +187,10 @@ fn verify_dsse_v002(
         let mut found = false;
         for rekor_sig in rekor_signatures {
             // Compare both signature bytes AND the verifier (certificate)
-            // The signature field in the bundle is base64-encoded, same as in Rekor
-            // The verifier contains the x509Certificate.rawBytes (DER, base64-encoded)
-            if bundle_sig.sig == rekor_sig.content
-                && cert_der_b64 == rekor_sig.verifier.x509_certificate.raw_bytes
+            // The signature field in the bundle is SignatureBytes, compare as bytes
+            // The verifier contains the x509Certificate.rawBytes (DerCertificate)
+            if bundle_sig.sig.as_bytes() == rekor_sig.content.as_bytes()
+                && cert_der == rekor_sig.verifier.x509_certificate.raw_bytes.as_bytes()
             {
                 found = true;
                 break;
@@ -235,7 +228,7 @@ fn verify_intoto_v002(
     envelope: &sigstore_types::DsseEnvelope,
 ) -> Result<()> {
     let body = RekorEntryBody::from_base64_json(
-        entry.canonicalized_body.as_str(),
+        &entry.canonicalized_body.to_base64(),
         &entry.kind_version.kind,
         &entry.kind_version.version,
     )
@@ -255,14 +248,11 @@ fn verify_intoto_v002(
 
     // The Rekor entry has the payload double-base64-encoded, decode it once
     let rekor_payload_bytes = base64::engine::general_purpose::STANDARD
-        .decode(rekor_payload_b64)
+        .decode(rekor_payload_b64.as_bytes())
         .map_err(|e| Error::Verification(format!("failed to decode Rekor payload: {}", e)))?;
 
-    let rekor_payload = String::from_utf8(rekor_payload_bytes)
-        .map_err(|e| Error::Verification(format!("Rekor payload not valid UTF-8: {}", e)))?;
-
-    // Compare with bundle payload
-    if envelope.payload != rekor_payload {
+    // Compare with bundle payload bytes
+    if envelope.payload.as_bytes() != rekor_payload_bytes.as_slice() {
         return Err(Error::Verification(
             "DSSE payload in bundle does not match intoto Rekor entry".to_string(),
         ));
@@ -274,16 +264,12 @@ fn verify_intoto_v002(
         for rekor_sig in rekor_signatures {
             // The Rekor signature is also double-base64-encoded, decode it once
             let rekor_sig_decoded = base64::engine::general_purpose::STANDARD
-                .decode(&rekor_sig.sig)
+                .decode(rekor_sig.sig.as_bytes())
                 .map_err(|e| {
                     Error::Verification(format!("failed to decode Rekor signature: {}", e))
                 })?;
 
-            let rekor_sig_content = String::from_utf8(rekor_sig_decoded).map_err(|e| {
-                Error::Verification(format!("Rekor signature not valid UTF-8: {}", e))
-            })?;
-
-            if bundle_sig.sig == rekor_sig_content {
+            if bundle_sig.sig.as_bytes() == rekor_sig_decoded.as_slice() {
                 found_match = true;
                 break;
             }

@@ -291,9 +291,7 @@ impl Verifier {
         //      public key.
         // For DSSE envelopes, verify using PAE (Pre-Authentication Encoding)
         if let SignatureContent::DsseEnvelope(envelope) = &bundle.content {
-            let payload_bytes = envelope.decode_payload().map_err(|e| {
-                Error::Verification(format!("failed to decode DSSE payload: {}", e))
-            })?;
+            let payload_bytes = envelope.decode_payload();
 
             // Compute the PAE that was signed
             let pae = sigstore_types::pae(&envelope.payload_type, &payload_bytes);
@@ -301,9 +299,7 @@ impl Verifier {
             // Verify at least one signature is cryptographically valid
             let mut any_sig_valid = false;
             for sig in &envelope.signatures {
-                let sig_bytes = sig.sig.decode().map_err(|e| {
-                    Error::Verification(format!("failed to decode signature: {}", e))
-                })?;
+                let sig_bytes = sig.sig.as_bytes();
 
                 if sigstore_crypto::verify_signature(
                     &cert_info.public_key_bytes,
@@ -327,15 +323,12 @@ impl Verifier {
             // Verify artifact hash matches (for DSSE with in-toto statements)
             if !policy.skip_artifact_hash && envelope.payload_type == "application/vnd.in-toto+json"
             {
-                let payload_bytes = envelope
-                    .payload
-                    .decode()
-                    .map_err(|e| Error::Verification(format!("failed to decode payload: {}", e)))?;
+                let payload_bytes = envelope.payload.as_bytes();
 
                 let artifact_hash = Sha256Hash::from_bytes(sigstore_crypto::sha256(artifact));
                 let artifact_hash_hex = artifact_hash.to_hex();
 
-                let payload_str = String::from_utf8(payload_bytes).map_err(|e| {
+                let payload_str = std::str::from_utf8(payload_bytes).map_err(|e| {
                     Error::Verification(format!("payload is not valid UTF-8: {}", e))
                 })?;
 

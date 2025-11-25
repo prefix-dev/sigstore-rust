@@ -7,7 +7,8 @@
 use crate::checkpoint::Checkpoint;
 use crate::dsse::DsseEnvelope;
 use crate::encoding::{
-    Base64Body, Base64Der, Base64Hash, Base64Signature, Base64Timestamp, LogIndex, LogKeyId,
+    CanonicalizedBody, DerCertificate, LogIndex, LogKeyId, Sha256Hash, SignatureBytes,
+    SignedTimestamp, TimestampToken,
 };
 use crate::error::{Error, Result};
 use crate::hash::HashAlgorithm;
@@ -109,12 +110,12 @@ impl Bundle {
         MediaType::from_str(&self.media_type)
     }
 
-    /// Get the signing certificate if present (base64-encoded DER)
-    pub fn signing_certificate(&self) -> Option<&str> {
+    /// Get the signing certificate if present
+    pub fn signing_certificate(&self) -> Option<&DerCertificate> {
         match &self.verification_material.content {
-            VerificationMaterialContent::Certificate(cert) => Some(cert.raw_bytes.as_str()),
+            VerificationMaterialContent::Certificate(cert) => Some(&cert.raw_bytes),
             VerificationMaterialContent::X509CertificateChain { certificates } => {
-                certificates.first().map(|c| c.raw_bytes.as_str())
+                certificates.first().map(|c| &c.raw_bytes)
             }
             VerificationMaterialContent::PublicKey { .. } => None,
         }
@@ -154,8 +155,8 @@ pub struct MessageSignature {
     /// Message digest (optional, for detached signatures)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_digest: Option<MessageDigest>,
-    /// The signature bytes (base64 encoded)
-    pub signature: Base64Signature,
+    /// The signature bytes
+    pub signature: SignatureBytes,
 }
 
 /// Message digest with algorithm
@@ -164,8 +165,8 @@ pub struct MessageSignature {
 pub struct MessageDigest {
     /// Hash algorithm
     pub algorithm: HashAlgorithm,
-    /// Digest bytes (base64 encoded)
-    pub digest: Base64Hash,
+    /// Digest bytes
+    pub digest: Sha256Hash,
 }
 
 /// Verification material containing certificate/key and log entries
@@ -210,16 +211,16 @@ pub enum VerificationMaterialContent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CertificateContent {
-    /// Base64-encoded DER certificate
-    pub raw_bytes: Base64Der,
+    /// DER-encoded certificate
+    pub raw_bytes: DerCertificate,
 }
 
 /// X.509 certificate in the chain
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct X509Certificate {
-    /// Base64-encoded DER certificate
-    pub raw_bytes: Base64Der,
+    /// DER-encoded certificate
+    pub raw_bytes: DerCertificate,
 }
 
 /// A transparency log entry
@@ -228,7 +229,7 @@ pub struct X509Certificate {
 pub struct TransparencyLogEntry {
     /// Log index
     pub log_index: LogIndex,
-    /// Log ID (base64 encoded)
+    /// Log ID
     pub log_id: LogId,
     /// Kind and version of the entry
     pub kind_version: KindVersion,
@@ -241,8 +242,8 @@ pub struct TransparencyLogEntry {
     /// Inclusion proof
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inclusion_proof: Option<InclusionProof>,
-    /// Canonicalized body (base64 encoded)
-    pub canonicalized_body: Base64Body,
+    /// Canonicalized body
+    pub canonicalized_body: CanonicalizedBody,
 }
 
 /// Log identifier
@@ -267,8 +268,8 @@ pub struct KindVersion {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InclusionPromise {
-    /// Signed entry timestamp (base64 encoded)
-    pub signed_entry_timestamp: Base64Timestamp,
+    /// Signed entry timestamp
+    pub signed_entry_timestamp: SignedTimestamp,
 }
 
 /// Inclusion proof in the Merkle tree
@@ -277,15 +278,37 @@ pub struct InclusionPromise {
 pub struct InclusionProof {
     /// Index of the entry in the log
     pub log_index: LogIndex,
-    /// Root hash of the tree (base64 encoded)
-    pub root_hash: Base64Hash,
+    /// Root hash of the tree
+    pub root_hash: Sha256Hash,
     /// Tree size at time of proof
     pub tree_size: String,
-    /// Hashes in the inclusion proof path (base64 encoded)
-    pub hashes: Vec<Base64Hash>,
+    /// Hashes in the inclusion proof path
+    #[serde(with = "sha256_hash_vec")]
+    pub hashes: Vec<Sha256Hash>,
     /// Checkpoint (signed tree head) - optional
     #[serde(default, skip_serializing_if = "CheckpointData::is_empty")]
     pub checkpoint: CheckpointData,
+}
+
+/// Serde helper for Vec<Sha256Hash>
+mod sha256_hash_vec {
+    use super::Sha256Hash;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(hashes: &[Sha256Hash], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // Sha256Hash already implements Serialize (as base64)
+        hashes.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<Sha256Hash>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Vec::<Sha256Hash>::deserialize(deserializer)
+    }
 }
 
 /// Checkpoint data in inclusion proof
@@ -322,8 +345,8 @@ pub struct TimestampVerificationData {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Rfc3161Timestamp {
-    /// Signed timestamp data (base64 encoded DER)
-    pub signed_timestamp: Base64Der,
+    /// Signed timestamp data (DER-encoded)
+    pub signed_timestamp: TimestampToken,
 }
 
 // Custom Deserialize implementation for Bundle

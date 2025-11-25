@@ -70,8 +70,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .leaf_certificate()
         .ok_or("No leaf certificate in response")?;
 
-    // For the bundle, we need the DER encoded certificate (base64)
+    // For the bundle, we need the DER encoded certificate bytes
     let leaf_cert_der_b64 = pem_to_der_base64(leaf_cert_pem)?;
+    use base64::Engine;
+    let leaf_cert_der = base64::engine::general_purpose::STANDARD.decode(&leaf_cert_der_b64)?;
 
     println!("Got signing certificate");
 
@@ -103,17 +105,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // This automatically extracts log_id, inclusion_promise, inclusion_proof, etc.
     let tlog_entry = TlogEntryBuilder::from_log_entry(&log_entry, "hashedrekord", "0.0.1").build();
 
-    // Convert signature and digest to base64 for bundle
-    use base64::Engine;
-    let signature_b64 = base64::engine::general_purpose::STANDARD.encode(signature.as_bytes());
-    let digest_b64 = base64::engine::general_purpose::STANDARD.encode(hash_bytes);
+    // Create digest hash from bytes
+    let digest_hash = sigstore_types::Sha256Hash::from_bytes(hash_bytes);
 
     let bundle = BundleBuilder::new()
         .version(MediaType::Bundle0_3)
-        .certificate(leaf_cert_der_b64)
+        .certificate(leaf_cert_der)
         .message_signature_with_digest(
-            signature_b64,
-            digest_b64,
+            signature.as_bytes().to_vec(),
+            digest_hash,
             sigstore_types::HashAlgorithm::Sha2256,
         )
         .add_tlog_entry(tlog_entry)

@@ -2,7 +2,6 @@
 //!
 //! These tests validate the complete verification flow using real bundles.
 
-use base64::{engine::general_purpose::STANDARD, Engine};
 use sigstore::bundle::{validate_bundle, validate_bundle_with_options, ValidationOptions};
 use sigstore::types::Bundle;
 use sigstore::verify::{verify, VerificationPolicy, Verifier};
@@ -501,15 +500,13 @@ fn test_github_actions_provenance_bundle() {
         "Expected v0.1 or v0.2 bundle"
     );
 
-    // Extract the signing certificate (base64-encoded DER)
-    let cert_b64 = bundle
+    // Extract the signing certificate (raw DER bytes)
+    let cert = bundle
         .signing_certificate()
         .expect("Should have a signing certificate");
 
-    // Decode from base64
-    let cert_der = STANDARD
-        .decode(cert_b64)
-        .expect("Failed to decode base64 certificate");
+    // Get the raw bytes directly (no base64 decoding needed)
+    let cert_der = cert.as_bytes();
 
     // Parse the certificate to verify GitHub Actions extensions
     use x509_cert::Certificate;
@@ -538,15 +535,13 @@ fn test_github_actions_provenance_bundle() {
 fn test_othername_san_bundle() {
     let bundle = Bundle::from_json(OTHERNAME_BUNDLE).expect("Failed to parse othername bundle");
 
-    // Extract the signing certificate (base64-encoded DER)
-    let cert_b64 = bundle
+    // Extract the signing certificate (raw DER bytes)
+    let cert = bundle
         .signing_certificate()
         .expect("Should have a signing certificate");
 
-    // Decode from base64
-    let cert_der = STANDARD
-        .decode(cert_b64)
-        .expect("Failed to decode base64 certificate");
+    // Get the raw bytes directly (no base64 decoding needed)
+    let cert_der = cert.as_bytes();
 
     // Parse the certificate
     use x509_cert::Certificate;
@@ -711,15 +706,13 @@ fn test_bundle_v3_github_whl() {
     // Should parse successfully
     assert!(bundle.media_type.contains("0.2"));
 
-    // Should have certificate
-    let cert_b64 = bundle
+    // Should have certificate (raw DER bytes)
+    let cert = bundle
         .signing_certificate()
         .expect("Should have a signing certificate");
 
-    // Decode from base64
-    let cert_der = STANDARD
-        .decode(cert_b64)
-        .expect("Failed to decode base64 certificate");
+    // Get the raw bytes directly (no base64 decoding needed)
+    let cert_der = cert.as_bytes();
 
     // Parse the certificate
     use x509_cert::Certificate;

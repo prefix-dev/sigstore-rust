@@ -3,7 +3,7 @@
 //! A checkpoint represents a signed commitment to the state of a transparency log.
 //! Format specified in: https://github.com/transparency-dev/formats/blob/main/log/README.md
 
-use crate::encoding::{Base64, Sha256Hash, Unknown};
+use crate::encoding::{base64_bytes, Sha256Hash};
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 
@@ -29,9 +29,11 @@ pub struct Checkpoint {
 #[serde(rename_all = "camelCase")]
 pub struct CheckpointSignature {
     /// Key identifier (first 4 bytes of SHA-256 of the public key)
-    pub key_id: Base64<Unknown>,
+    #[serde(with = "base64_bytes")]
+    pub key_id: Vec<u8>,
     /// Signature bytes
-    pub signature: Base64<Unknown>,
+    #[serde(with = "base64_bytes")]
+    pub signature: Vec<u8>,
 }
 
 impl Checkpoint {
@@ -121,8 +123,8 @@ impl Checkpoint {
                     ));
                 }
 
-                let key_id = Base64::encode(&decoded[..4]);
-                let signature = Base64::encode(&decoded[4..]);
+                let key_id = decoded[..4].to_vec();
+                let signature = decoded[4..].to_vec();
 
                 signatures.push(CheckpointSignature { key_id, signature });
             } else {

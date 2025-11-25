@@ -136,7 +136,7 @@ fn test_v3_bundle_message_signature() {
     match &bundle.content {
         sigstore_types::bundle::SignatureContent::MessageSignature(sig) => {
             // Check signature is present
-            assert!(!sig.signature.as_str().is_empty());
+            assert!(!sig.signature.as_bytes().is_empty());
 
             // Check message digest
             let digest = sig.message_digest.as_ref().unwrap();
@@ -144,7 +144,7 @@ fn test_v3_bundle_message_signature() {
                 digest.algorithm,
                 sigstore_types::hash::HashAlgorithm::Sha2256
             );
-            assert!(!digest.digest.as_str().is_empty());
+            assert!(!digest.digest.as_bytes().is_empty());
         }
         sigstore_types::bundle::SignatureContent::DsseEnvelope(_) => {
             panic!("Expected MessageSignature, got DsseEnvelope");
@@ -191,12 +191,9 @@ fn test_invalid_bundle_version() {
 fn test_v3_bundle_certificate_extraction() {
     let bundle = Bundle::from_json(BUNDLE_V3_JSON).unwrap();
 
-    // Get the certificate
-    let cert_b64 = bundle.signing_certificate().unwrap();
-
-    // Should be valid base64
-    use base64::{engine::general_purpose::STANDARD, Engine};
-    let cert_bytes = STANDARD.decode(cert_b64).unwrap();
+    // Get the certificate (raw DER bytes)
+    let cert = bundle.signing_certificate().unwrap();
+    let cert_bytes = cert.as_bytes();
 
     // DER-encoded certificate should start with SEQUENCE tag (0x30)
     assert_eq!(cert_bytes[0], 0x30);
@@ -209,34 +206,28 @@ fn test_v3_bundle_certificate_extraction() {
 #[test]
 fn test_inclusion_proof_verification() {
     use sigstore_merkle::{hash_leaf, verify_inclusion_proof};
-    use sigstore_types::Sha256Hash;
 
     let bundle = Bundle::from_json(BUNDLE_V3_JSON).unwrap();
     let entry = &bundle.verification_material.tlog_entries[0];
     let proof = entry.inclusion_proof.as_ref().unwrap();
 
-    // Decode the canonicalized body
-    let body = entry.canonicalized_body.decode().unwrap();
+    // Get the canonicalized body bytes
+    let body = entry.canonicalized_body.as_bytes();
 
     // Hash the leaf
-    let leaf_hash = hash_leaf(&body);
+    let leaf_hash = hash_leaf(body);
 
-    // Decode proof hashes
-    let proof_hashes: Vec<Sha256Hash> = proof
-        .hashes
-        .iter()
-        .map(|h| Sha256Hash::from_base64_ref(h).unwrap())
-        .collect();
+    // Proof hashes are already Vec<Sha256Hash>
+    let proof_hashes = &proof.hashes;
 
-    // Decode root hash
-    let root_hash = Sha256Hash::from_base64_ref(&proof.root_hash).unwrap();
+    // Root hash is already a Sha256Hash
+    let root_hash = &proof.root_hash;
 
     // Verify the inclusion proof
     let leaf_index: u64 = proof.log_index.as_u64().unwrap();
     let tree_size: u64 = proof.tree_size.parse().unwrap();
 
-    let result =
-        verify_inclusion_proof(&leaf_hash, leaf_index, tree_size, &proof_hashes, &root_hash);
+    let result = verify_inclusion_proof(&leaf_hash, leaf_index, tree_size, proof_hashes, root_hash);
 
     assert!(
         result.is_ok(),

@@ -8,7 +8,7 @@ use aws_lc_rs::{
         ECDSA_P256_SHA256_ASN1_SIGNING, ECDSA_P384_SHA384_ASN1_SIGNING,
     },
 };
-use sigstore_types::{Base64Pem, Base64Signature};
+use sigstore_types::{PemContent, SignatureBytes};
 
 /// A PEM-encoded public key
 ///
@@ -48,10 +48,10 @@ impl AsRef<str> for PublicKeyPem {
     }
 }
 
-impl From<PublicKeyPem> for Base64Pem {
+impl From<PublicKeyPem> for PemContent {
     fn from(pem: PublicKeyPem) -> Self {
-        use base64::Engine;
-        Base64Pem::new(base64::engine::general_purpose::STANDARD.encode(pem.0))
+        // PemContent stores the PEM text as bytes (base64-encoded when serialized)
+        PemContent::from_bytes(pem.0.as_bytes())
     }
 }
 
@@ -94,10 +94,9 @@ impl Signature {
     }
 }
 
-impl From<Signature> for Base64Signature {
+impl From<Signature> for SignatureBytes {
     fn from(sig: Signature) -> Self {
-        use base64::Engine;
-        Base64Signature::new(base64::engine::general_purpose::STANDARD.encode(sig.0))
+        SignatureBytes::new(sig.0)
     }
 }
 

@@ -107,13 +107,12 @@ fn test_validate_v01_bundle() {
 fn test_v01_bundle_certificate_extraction() {
     let bundle = Bundle::from_json(V01_BUNDLE).expect("Failed to parse bundle");
 
-    let cert_b64 = bundle
+    let cert = bundle
         .signing_certificate()
         .expect("Should have signing certificate");
 
-    // Should be able to decode the certificate
-    use base64::{engine::general_purpose::STANDARD, Engine};
-    let cert_der = STANDARD.decode(cert_b64).expect("Invalid base64");
+    // Certificate is already raw DER bytes - no base64 decoding needed
+    let cert_der = cert.as_bytes();
     assert!(!cert_der.is_empty());
 }
 
@@ -137,7 +136,7 @@ fn test_parse_v03_bundle() {
     match &bundle.verification_material.content {
         sigstore_types::bundle::VerificationMaterialContent::Certificate(cert) => {
             assert!(
-                !cert.raw_bytes.as_str().is_empty(),
+                !cert.raw_bytes.as_bytes().is_empty(),
                 "Certificate should not be empty"
             );
         }
@@ -263,35 +262,40 @@ fn test_v03_without_proof_fails_validation() {
 #[test]
 fn test_v03_with_certificate_chain_fails() {
     // v0.3 should not use x509CertificateChain
-    let json = r#"{
+    // Using valid 32-byte hashes for SHA-256 (44 chars in base64)
+    let fake_hash = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    let json = format!(
+        r#"{{
         "mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
-        "verificationMaterial": {
-            "x509CertificateChain": {
-                "certificates": [{"rawBytes": "dGVzdA=="}]
-            },
-            "tlogEntries": [{
+        "verificationMaterial": {{
+            "x509CertificateChain": {{
+                "certificates": [{{"rawBytes": "dGVzdA=="}}]
+            }},
+            "tlogEntries": [{{
                 "logIndex": "1",
-                "logId": {"keyId": "dGVzdA=="},
-                "kindVersion": {"kind": "dsse", "version": "0.0.1"},
+                "logId": {{"keyId": "dGVzdA=="}},
+                "kindVersion": {{"kind": "dsse", "version": "0.0.1"}},
                 "integratedTime": "1234567890",
-                "inclusionProof": {
+                "inclusionProof": {{
                     "logIndex": "1",
-                    "rootHash": "dGVzdA==",
+                    "rootHash": "{}",
                     "treeSize": "2",
                     "hashes": [],
-                    "checkpoint": {"envelope": "test\n1\ndGVzdA==\n"}
-                },
+                    "checkpoint": {{"envelope": "test\n1\n{}\n"}}
+                }},
                 "canonicalizedBody": "dGVzdA=="
-            }]
-        },
-        "dsseEnvelope": {
+            }}]
+        }},
+        "dsseEnvelope": {{
             "payload": "dGVzdA==",
             "payloadType": "application/vnd.in-toto+json",
-            "signatures": [{"sig": "dGVzdA=="}]
-        }
-    }"#;
+            "signatures": [{{"sig": "dGVzdA=="}}]
+        }}
+    }}"#,
+        fake_hash, fake_hash
+    );
 
-    let bundle = Bundle::from_json(json).expect("Failed to parse bundle");
+    let bundle = Bundle::from_json(&json).expect("Failed to parse bundle");
 
     // Should fail because v0.3 requires single certificate
     let result = validate_bundle(&bundle);

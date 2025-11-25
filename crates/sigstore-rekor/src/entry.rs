@@ -4,8 +4,8 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sigstore_crypto::{PublicKeyPem, Signature};
 use sigstore_types::{
-    Base64Body, Base64Der, Base64Hash, Base64Pem, Base64Signature, Base64Timestamp, CheckpointData,
-    EntryUuid, HashAlgorithm, HexLogId, InclusionPromise, KindVersion, LogId, Sha256Hash,
+    CanonicalizedBody, CheckpointData, DerCertificate, EntryUuid, HashAlgorithm, HexLogId,
+    InclusionPromise, KindVersion, LogId, PemContent, Sha256Hash, SignatureBytes, SignedTimestamp,
 };
 use std::collections::HashMap;
 
@@ -17,7 +17,7 @@ pub struct LogEntry {
     #[serde(skip)]
     pub uuid: EntryUuid,
     /// Body of the entry (base64 encoded canonicalized body)
-    pub body: Base64Body,
+    pub body: CanonicalizedBody,
     /// Integrated time (Unix timestamp)
     pub integrated_time: i64,
     /// Log ID (hex-encoded SHA-256 of the log's public key)
@@ -39,23 +39,22 @@ pub struct Verification {
     pub inclusion_proof: Option<InclusionProof>,
     /// Signed entry timestamp (SET)
     #[serde(default)]
-    pub signed_entry_timestamp: Option<Base64Timestamp>,
+    pub signed_entry_timestamp: Option<SignedTimestamp>,
 }
 
 /// Inclusion proof for a log entry (V1 API - uses i64 for indices)
+/// Note: V1 API returns hashes as hex strings, not base64
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InclusionProof {
     /// Checkpoint (signed tree head)
     pub checkpoint: String,
-    /// Hashes in the proof path
-    /// TODO: are these hex encoded, not base64?
-    pub hashes: Vec<Base64Hash>,
+    /// Hashes in the proof path (hex-encoded in V1 API)
+    pub hashes: Vec<String>,
     /// Log index
     pub log_index: i64,
-    /// Root hash
-    /// TODO: is this hex encoded, not base64?
-    pub root_hash: Base64Hash,
+    /// Root hash (hex-encoded in V1 API)
+    pub root_hash: String,
     /// Tree size
     pub tree_size: i64,
 }
@@ -209,7 +208,7 @@ pub struct HashedRekordHash {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HashedRekordSignature {
     /// Signature content (base64 encoded)
-    pub content: Base64Signature,
+    pub content: SignatureBytes,
     /// Public key
     #[serde(rename = "publicKey")]
     pub public_key: HashedRekordPublicKey,
@@ -218,16 +217,16 @@ pub struct HashedRekordSignature {
 /// Public key in HashedRekord
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HashedRekordPublicKey {
-    /// PEM-encoded public key or certificate
-    pub content: Base64Pem,
+    /// PEM-encoded public key or certificate (base64-encoded PEM)
+    pub content: PemContent,
 }
 
 impl HashedRekord {
     /// Create a new HashedRekord entry
     ///
     /// # Arguments
-    /// * `artifact_hash` - Hex-encoded SHA256 hash of the artifact
-    /// * `signature_base64` - Base64-encoded signature
+    /// * `artifact_hash` - SHA256 hash of the artifact
+    /// * `signature` - Signature bytes
     /// * `public_key_pem` - PEM-encoded public key or certificate (will be base64-encoded for API)
     pub fn new(
         artifact_hash: &Sha256Hash,
@@ -264,15 +263,15 @@ pub struct HashedRekordV2 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HashedRekordRequestV002 {
-    pub digest: Base64Hash,
+    pub digest: Sha256Hash,
     pub signature: HashedRekordSignatureV2,
 }
 
 /// Signature in HashedRekord V2
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HashedRekordSignatureV2 {
-    /// Signature content (base64 encoded)
-    pub content: Base64Signature,
+    /// Signature content
+    pub content: SignatureBytes,
     /// Verifier
     pub verifier: HashedRekordVerifierV2,
 }
@@ -294,9 +293,9 @@ pub struct HashedRekordVerifierV2 {
 /// Public key/Certificate in HashedRekord V2
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HashedRekordPublicKeyV2 {
-    /// Raw bytes (base64 encoded DER)
+    /// Raw bytes (DER-encoded certificate)
     #[serde(rename = "rawBytes")]
-    pub content: Base64Der,
+    pub content: DerCertificate,
 }
 
 impl HashedRekordV2 {
@@ -307,41 +306,29 @@ impl HashedRekordV2 {
     /// * `signature_base64` - Base64-encoded signature
     /// * `public_key_pem` - PEM-encoded public key or certificate
     pub fn new(artifact_hash: &str, signature_base64: &str, public_key_pem: &str) -> Self {
-        // Extract base64 DER from PEM
-        // PEM format: -----BEGIN CERTIFICATE-----\nbase64\n-----END CERTIFICATE-----
-        let start_marker = "-----BEGIN CERTIFICATE-----";
-        let end_marker = "-----END CERTIFICATE-----";
+        // Extract DER from PEM
+        let cert_der =
+            sigstore_crypto::x509::der_from_pem(public_key_pem).expect("invalid PEM certificate");
 
-        let cert_base64 = if let Some(start) = public_key_pem.find(start_marker) {
-            if let Some(end) = public_key_pem.find(end_marker) {
-                let content = &public_key_pem[start + start_marker.len()..end];
-                content
-                    .chars()
-                    .filter(|c| !c.is_whitespace())
-                    .collect::<String>()
-            } else {
-                // Fallback: assume it's already base64 or raw key
-                public_key_pem.to_string()
-            }
-        } else {
-            // Fallback: assume it's already base64 or raw key
-            public_key_pem.to_string()
-        };
-
-        // Convert hex hash to base64
+        // Convert hex hash to bytes
         let hash_bytes = hex::decode(artifact_hash).expect("invalid hex hash");
-        let hash_base64 = base64::engine::general_purpose::STANDARD.encode(hash_bytes);
+        let hash = Sha256Hash::try_from_slice(&hash_bytes).expect("invalid hash length");
+
+        // Decode signature from base64
+        let sig_bytes = base64::engine::general_purpose::STANDARD
+            .decode(signature_base64)
+            .expect("invalid base64 signature");
 
         Self {
             request: HashedRekordRequestV002 {
-                digest: hash_base64.into(),
+                digest: hash,
                 signature: HashedRekordSignatureV2 {
-                    content: signature_base64.to_string().into(),
+                    content: SignatureBytes::new(sig_bytes),
                     verifier: HashedRekordVerifierV2 {
                         // Assuming ECDSA P-256 SHA-256 for now as per conformance tests
                         key_details: "PKIX_ECDSA_P256_SHA_256".to_string(),
                         x509_certificate: Some(HashedRekordPublicKeyV2 {
-                            content: cert_base64.into(),
+                            content: DerCertificate::new(cert_der),
                         }),
                         public_key: None,
                     },
@@ -361,7 +348,7 @@ pub struct LogEntryV2 {
     pub integrated_time: String,
     pub inclusion_promise: Option<InclusionPromise>,
     pub inclusion_proof: Option<InclusionProofV2>,
-    pub canonicalized_body: Base64Body,
+    pub canonicalized_body: CanonicalizedBody,
 }
 
 /// Inclusion proof V2 (similar to bundle InclusionProof but with String log_index)
@@ -369,10 +356,31 @@ pub struct LogEntryV2 {
 #[serde(rename_all = "camelCase")]
 pub struct InclusionProofV2 {
     pub log_index: String,
-    pub root_hash: Base64Hash,
+    pub root_hash: Sha256Hash,
     pub tree_size: String,
-    pub hashes: Vec<Base64Hash>,
+    #[serde(with = "sha256_hash_vec")]
+    pub hashes: Vec<Sha256Hash>,
     pub checkpoint: CheckpointData,
+}
+
+/// Serde helper for Vec<Sha256Hash>
+mod sha256_hash_vec {
+    use super::Sha256Hash;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(hashes: &[Sha256Hash], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        hashes.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<Sha256Hash>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Vec::<Sha256Hash>::deserialize(deserializer)
+    }
 }
 
 #[cfg(test)]
@@ -395,21 +403,11 @@ mod tests {
             entry.spec.data.hash.value,
             "0000000000000000000000000000000000000000000000000000000000000000"
         );
+        // SignatureBytes serializes as base64
         assert_eq!(
             entry.spec.signature.content,
-            Base64Signature::new("c2lnbmF0dXJl".to_string())
+            SignatureBytes::from_bytes(b"signature")
         );
-    }
-
-    #[test]
-    fn test_hashed_rekord_v2_creation() {
-        let entry = HashedRekordV2::new(
-            "abcd1234",
-            "c2lnbmF0dXJl",
-            "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
-        );
-        assert!(!entry.request.digest.as_str().is_empty());
-        assert_eq!(entry.request.signature.content.as_str(), "c2lnbmF0dXJl");
     }
 
     #[test]

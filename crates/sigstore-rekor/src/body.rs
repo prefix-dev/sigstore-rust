@@ -4,8 +4,10 @@
 //! content for different Rekor entry types and versions.
 
 use serde::{Deserialize, Serialize};
-use sigstore_types::encoding::{Base64, Base64Signature, Hex};
-use sigstore_types::HashAlgorithm;
+use sigstore_types::encoding::base64_bytes;
+use sigstore_types::{
+    DerCertificate, DerPublicKey, HashAlgorithm, HexHash, PayloadBytes, PemContent, SignatureBytes,
+};
 
 /// Parsed Rekor entry body
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,21 +49,21 @@ pub struct HashedRekordV001Data {
 pub struct HashValue {
     pub algorithm: HashAlgorithm,
     /// Hex-encoded hash value (used in v0.0.1)
-    pub value: Hex,
+    pub value: HexHash,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HashedRekordV001Signature {
     /// Base64-encoded signature
-    pub content: Base64Signature,
+    pub content: SignatureBytes,
     pub public_key: PublicKeyContent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublicKeyContent {
     /// Base64-encoded PEM public key (double-encoded: base64 of PEM text)
-    pub content: Base64,
+    pub content: PemContent,
 }
 
 // ============================================================================
@@ -88,13 +90,14 @@ pub struct HashedRekordV002Data {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HashedRekordV002DataInner {
     /// Base64-encoded hash digest
-    pub digest: Base64,
+    #[serde(with = "base64_bytes")]
+    pub digest: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HashedRekordV002Signature {
     /// Base64-encoded signature
-    pub content: Base64Signature,
+    pub content: SignatureBytes,
     pub verifier: HashedRekordV002Verifier,
 }
 
@@ -110,15 +113,15 @@ pub struct HashedRekordV002Verifier {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct X509CertificateRaw {
-    /// Base64-encoded DER certificate
-    pub raw_bytes: Base64,
+    /// DER-encoded certificate
+    pub raw_bytes: DerCertificate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublicKeyRaw {
-    /// Base64-encoded public key
-    pub raw_bytes: Base64,
+    /// DER-encoded public key
+    pub raw_bytes: DerPublicKey,
 }
 
 // ============================================================================
@@ -154,10 +157,10 @@ pub struct PayloadHashV001 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DsseV001Signature {
-    /// Base64-encoded signature content
-    pub signature: Base64Signature,
+    /// Signature bytes
+    pub signature: SignatureBytes,
     /// PEM-encoded certificate (base64-encoded)
-    pub verifier: Base64,
+    pub verifier: PemContent,
 }
 
 // ============================================================================
@@ -186,13 +189,14 @@ pub struct DsseV002Data {
 pub struct PayloadHash {
     pub algorithm: HashAlgorithm,
     /// Base64-encoded hash digest
-    pub digest: Base64,
+    #[serde(with = "base64_bytes")]
+    pub digest: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DsseV002Signature {
-    /// Base64-encoded signature content
-    pub content: Base64Signature,
+    /// Signature bytes
+    pub content: SignatureBytes,
     /// Verifier information (certificate and key details)
     pub verifier: DsseV002Verifier,
 }
@@ -227,15 +231,15 @@ pub struct IntotoV002Content {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntotoEnvelope {
-    /// Base64-encoded payload (actually the payload is double-encoded in Rekor)
-    pub payload: Base64,
+    /// Payload bytes (actually double-encoded in Rekor)
+    pub payload: PayloadBytes,
     pub signatures: Vec<IntotoSignature>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntotoSignature {
-    /// Base64-encoded signature (double-encoded in Rekor)
-    pub sig: Base64Signature,
+    /// Signature bytes (double-encoded in Rekor)
+    pub sig: SignatureBytes,
 }
 
 // ============================================================================

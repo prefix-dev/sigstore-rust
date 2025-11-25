@@ -5,7 +5,7 @@ use sigstore::fulcio::FulcioClient;
 use sigstore::oidc::get_identity_token;
 use sigstore::rekor::{DsseEntry, RekorClient};
 use sigstore::types::{DsseEnvelope, DsseSignature, MediaType};
-use sigstore_types::{Base64Payload, KeyId};
+use sigstore_types::{KeyId, PayloadBytes};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -102,8 +102,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .leaf_certificate()
         .ok_or("No leaf certificate in response")?;
 
-    // For the bundle, we need the DER encoded certificate (base64)
+    // For the bundle, we need the DER encoded certificate bytes
     let leaf_cert_der_b64 = pem_to_der_base64(leaf_cert_pem)?;
+    use base64::Engine;
+    let leaf_cert_der = base64::engine::general_purpose::STANDARD.decode(&leaf_cert_der_b64)?;
 
     println!("Got signing certificate");
 
@@ -138,12 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Serialize statement to JSON
     let statement_json = serde_json::to_string(&statement)?;
-
-    // Base64-encode the statement as payload
-    let payload_b64 = base64::Engine::encode(
-        &base64::engine::general_purpose::STANDARD,
-        statement_json.as_bytes(),
-    );
+    let statement_bytes = statement_json.as_bytes();
 
     // 5. Create and Sign DSSE Envelope
     println!("Creating DSSE envelope...");
@@ -151,13 +148,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create PAE (Pre-Authentication Encoding) and sign it
     // For in-toto, the payload type must be "application/vnd.in-toto+json"
     let payload_type = "application/vnd.in-toto+json";
-    let pae = sigstore::types::dsse::pae(payload_type, statement_json.as_bytes());
+    let pae = sigstore::types::dsse::pae(payload_type, statement_bytes);
     let signature = key_pair.sign(&pae)?;
 
-    // Create DSSE envelope
+    // Create DSSE envelope (PayloadBytes handles base64 encoding at serde level)
     let dsse_envelope = DsseEnvelope::new(
         payload_type.to_string(),
-        Base64Payload::new(payload_b64),
+        PayloadBytes::from_bytes(statement_bytes),
         vec![DsseSignature {
             sig: signature.into(),
             keyid: KeyId::default(),
@@ -186,7 +183,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bundle = BundleBuilder::new()
         .version(MediaType::Bundle0_3)
-        .certificate(leaf_cert_der_b64)
+        .certificate(leaf_cert_der)
         .dsse_envelope(dsse_envelope)
         .add_tlog_entry(tlog_entry)
         .build()

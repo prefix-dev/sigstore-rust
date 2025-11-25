@@ -17,18 +17,12 @@ pub fn extract_certificate_der(
     verification_material: &VerificationMaterialContent,
 ) -> Result<Vec<u8>> {
     match verification_material {
-        VerificationMaterialContent::Certificate(cert) => cert
-            .raw_bytes
-            .decode()
-            .map_err(|e| Error::Verification(format!("failed to decode certificate: {}", e))),
+        VerificationMaterialContent::Certificate(cert) => Ok(cert.raw_bytes.as_bytes().to_vec()),
         VerificationMaterialContent::X509CertificateChain { certificates } => {
             if certificates.is_empty() {
                 return Err(Error::Verification("no certificates in chain".to_string()));
             }
-            certificates[0]
-                .raw_bytes
-                .decode()
-                .map_err(|e| Error::Verification(format!("failed to decode certificate: {}", e)))
+            Ok(certificates[0].raw_bytes.as_bytes().to_vec())
         }
         VerificationMaterialContent::PublicKey { .. } => Err(Error::Verification(
             "public key verification not yet supported".to_string(),
@@ -39,20 +33,14 @@ pub fn extract_certificate_der(
 /// Extract signature bytes from bundle content (needed for TSA verification)
 pub fn extract_signature_bytes(content: &SignatureContent) -> Result<Vec<u8>> {
     match content {
-        SignatureContent::MessageSignature(msg_sig) => msg_sig
-            .signature
-            .decode()
-            .map_err(|e| Error::Verification(format!("failed to decode signature: {}", e))),
+        SignatureContent::MessageSignature(msg_sig) => Ok(msg_sig.signature.as_bytes().to_vec()),
         SignatureContent::DsseEnvelope(envelope) => {
             if envelope.signatures.is_empty() {
                 return Err(Error::Verification(
                     "no signatures in DSSE envelope".to_string(),
                 ));
             }
-            envelope.signatures[0]
-                .sig
-                .decode()
-                .map_err(|e| Error::Verification(format!("failed to decode signature: {}", e)))
+            Ok(envelope.signatures[0].sig.as_bytes().to_vec())
         }
     }
 }
@@ -109,11 +97,8 @@ pub fn extract_tsa_timestamp(
         .timestamp_verification_data
         .rfc3161_timestamps
     {
-        // Decode the base64-encoded timestamp
-        let ts_bytes = ts
-            .signed_timestamp
-            .decode()
-            .map_err(|e| Error::Verification(format!("failed to decode TSA timestamp: {}", e)))?;
+        // Get the timestamp bytes
+        let ts_bytes = ts.signed_timestamp.as_bytes();
 
         // If we have a trusted root, perform full verification
         if let Some(root) = trusted_root {
@@ -481,9 +466,7 @@ fn get_issuer_spki(
         verification_material
     {
         if certificates.len() > 1 {
-            let issuer_der = certificates[1].raw_bytes.decode().map_err(|e| {
-                Error::Verification(format!("failed to decode issuer certificate: {}", e))
-            })?;
+            let issuer_der = certificates[1].raw_bytes.as_bytes();
             let issuer_cert = Certificate::from_der(&issuer_der).map_err(|e| {
                 Error::Verification(format!("failed to parse issuer certificate: {}", e))
             })?;
@@ -827,8 +810,9 @@ mod tests {
 
         // Verify the SCT
         use sigstore_types::bundle::CertificateContent;
+        use sigstore_types::DerCertificate;
         let content = VerificationMaterialContent::Certificate(CertificateContent {
-            raw_bytes: cert_base64.to_string().into(),
+            raw_bytes: DerCertificate::from_base64(cert_base64).expect("valid base64"),
         });
         let result = verify_sct(&content, Some(&trusted_root));
         assert!(
@@ -933,8 +917,9 @@ mod tests {
 
         // Verify the SCT
         use sigstore_types::bundle::CertificateContent;
+        use sigstore_types::DerCertificate;
         let content = VerificationMaterialContent::Certificate(CertificateContent {
-            raw_bytes: cert_base64.to_string().into(),
+            raw_bytes: DerCertificate::from_base64(cert_base64).expect("valid base64"),
         });
         let result = verify_sct(&content, Some(&trusted_root));
         assert!(

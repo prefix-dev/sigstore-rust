@@ -318,19 +318,29 @@ impl Signer {
         tlog_builder: TlogEntryBuilder,
         timestamp_b64: Option<String>,
     ) -> Result<Bundle> {
-        // Convert signature to base64
-        let signature_b64 = base64::engine::general_purpose::STANDARD.encode(signature.as_bytes());
+        // Decode certificate chain from base64 to DER bytes
+        let chain_der: Vec<Vec<u8>> = chain_der_b64
+            .into_iter()
+            .map(|cert_b64| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(&cert_b64)
+                    .map_err(|e| Error::Signing(format!("Invalid certificate base64: {}", e)))
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        // Build bundle
+        // Build bundle with raw bytes
         let mut bundle_builder = BundleBuilder::new()
             .version(MediaType::Bundle0_2)
-            .certificate_chain(chain_der_b64)
-            .message_signature(signature_b64)
+            .certificate_chain(chain_der)
+            .message_signature(signature.into_bytes())
             .add_tlog_entry(tlog_builder.build());
 
         // Add timestamp if present
         if let Some(ts_b64) = timestamp_b64 {
-            bundle_builder = bundle_builder.add_rfc3161_timestamp(ts_b64);
+            let ts_bytes = base64::engine::general_purpose::STANDARD
+                .decode(&ts_b64)
+                .map_err(|e| Error::Signing(format!("Invalid timestamp base64: {}", e)))?;
+            bundle_builder = bundle_builder.add_rfc3161_timestamp(ts_bytes);
         }
 
         bundle_builder

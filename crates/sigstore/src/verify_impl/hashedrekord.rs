@@ -4,7 +4,6 @@
 //! artifact hash verification and certificate/signature matching.
 
 use crate::error::{Error, Result};
-use base64::Engine;
 use sigstore_crypto::x509;
 use sigstore_rekor::body::RekorEntryBody;
 use sigstore_types::bundle::VerificationMaterialContent;
@@ -33,9 +32,9 @@ fn verify_hashedrekord_entry(
     artifact: &[u8],
     skip_artifact_hash: bool,
 ) -> Result<()> {
-    // Parse the Rekor entry body
+    // Parse the Rekor entry body (convert canonicalized body to base64 string)
     let body = RekorEntryBody::from_base64_json(
-        entry.canonicalized_body.as_str(),
+        &entry.canonicalized_body.to_base64(),
         &entry.kind_version.kind,
         &entry.kind_version.version,
     )
@@ -50,15 +49,16 @@ fn verify_hashedrekord_entry(
         match &body {
             RekorEntryBody::HashedRekordV001(rekord) => {
                 // v0.0.1: spec.data.hash.value (hex-encoded)
-                let expected = Sha256Hash::from_hex(&rekord.spec.data.hash.value).map_err(|e| {
-                    Error::Verification(format!("invalid hash in Rekor entry: {}", e))
-                })?;
+                let expected =
+                    Sha256Hash::from_hex(rekord.spec.data.hash.value.as_str()).map_err(|e| {
+                        Error::Verification(format!("invalid hash in Rekor entry: {}", e))
+                    })?;
                 validate_artifact_hash(&artifact_hash_to_check, &expected)?;
             }
             RekorEntryBody::HashedRekordV002(rekord) => {
-                // v0.0.2: spec.hashedRekordV002.data.digest (base64-encoded)
+                // v0.0.2: spec.hashedRekordV002.data.digest (Vec<u8>)
                 let expected =
-                    Sha256Hash::from_base64(rekord.spec.hashed_rekord_v002.data.digest.as_str())
+                    Sha256Hash::try_from_slice(&rekord.spec.hashed_rekord_v002.data.digest)
                         .map_err(|e| {
                             Error::Verification(format!("invalid digest in Rekor entry: {}", e))
                         })?;
@@ -105,10 +105,8 @@ fn get_artifact_hash(
         // DIGEST mode - extract hash from bundle's message signature
         if let SignatureContent::MessageSignature(sig) = content {
             if let Some(digest) = &sig.message_digest {
-                // Decode the digest from the bundle (base64-encoded)
-                Sha256Hash::from_base64(digest.digest.as_str()).map_err(|e| {
-                    Error::Verification(format!("failed to decode message digest: {}", e))
-                })
+                // digest.digest is already a Sha256Hash
+                Ok(digest.digest)
             } else {
                 Err(Error::Verification(
                     "no message digest in bundle for DIGEST mode".to_string(),
@@ -146,19 +144,11 @@ fn validate_certificate_match(
     // Extract certificate DER from Rekor entry
     let rekor_cert_der_opt = match body {
         RekorEntryBody::HashedRekordV001(rekord) => {
-            // v0.0.1: spec.signature.publicKey.content is base64-encoded PEM string
-            // Decode the base64 to get PEM text
-            let pem_bytes = rekord
-                .spec
-                .signature
-                .public_key
-                .content
-                .decode()
-                .map_err(|e| {
-                    Error::Verification(format!("failed to decode public key base64: {}", e))
-                })?;
+            // v0.0.1: spec.signature.publicKey.content is base64-encoded PEM (PemContent)
+            // PemContent stores the PEM text as bytes
+            let pem_bytes = rekord.spec.signature.public_key.content.as_bytes();
 
-            let pem_str = String::from_utf8(pem_bytes).map_err(|e| {
+            let pem_str = String::from_utf8(pem_bytes.to_vec()).map_err(|e| {
                 Error::Verification(format!("public key PEM not valid UTF-8: {}", e))
             })?;
 
@@ -168,7 +158,7 @@ fn validate_certificate_match(
             })?)
         }
         RekorEntryBody::HashedRekordV002(rekord) => {
-            // v0.0.2: spec.hashedRekordV002.signature.verifier.x509Certificate.rawBytes (Base64 DER)
+            // v0.0.2: spec.hashedRekordV002.signature.verifier.x509Certificate.rawBytes (DerCertificate)
             rekord
                 .spec
                 .hashed_rekord_v002
@@ -176,19 +166,14 @@ fn validate_certificate_match(
                 .verifier
                 .x509_certificate
                 .as_ref()
-                .map(|cert| {
-                    cert.raw_bytes.decode().map_err(|e| {
-                        Error::Verification(format!("failed to decode Rekor certificate: {}", e))
-                    })
-                })
-                .transpose()?
+                .map(|cert| cert.raw_bytes.as_bytes().to_vec())
         }
         _ => None,
     };
 
     if let Some(rekor_cert_der) = rekor_cert_der_opt {
         // Get the certificate from the bundle
-        let bundle_cert_b64 = match &bundle.verification_material.content {
+        let bundle_cert = match &bundle.verification_material.content {
             VerificationMaterialContent::X509CertificateChain { certificates } => {
                 certificates.first().map(|c| &c.raw_bytes)
             }
@@ -196,13 +181,9 @@ fn validate_certificate_match(
             _ => None,
         };
 
-        if let Some(bundle_cert_b64) = bundle_cert_b64 {
-            // Decode bundle certificate (still String for now, will update bundle types next)
-            let bundle_cert_der = base64::engine::general_purpose::STANDARD
-                .decode(bundle_cert_b64)
-                .map_err(|e| {
-                    Error::Verification(format!("failed to decode bundle certificate: {}", e))
-                })?;
+        if let Some(bundle_cert) = bundle_cert {
+            // Bundle certificate is DerCertificate, get raw bytes
+            let bundle_cert_der = bundle_cert.as_bytes();
 
             // Compare certificates
             if bundle_cert_der != rekor_cert_der {
@@ -222,26 +203,26 @@ fn validate_signature_match(
     body: &RekorEntryBody,
     bundle: &Bundle,
 ) -> Result<()> {
-    // Extract signature from Rekor entry
-    let rekor_sig_b64 = match body {
+    // Extract signature from Rekor entry (SignatureBytes)
+    let rekor_sig = match body {
         RekorEntryBody::HashedRekordV001(rekord) => {
-            // v0.0.1: spec.signature.content (base64)
+            // v0.0.1: spec.signature.content (SignatureBytes)
             Some(&rekord.spec.signature.content)
         }
         RekorEntryBody::HashedRekordV002(rekord) => {
-            // v0.0.2: spec.hashedRekordV002.signature.content (base64)
+            // v0.0.2: spec.hashedRekordV002.signature.content (SignatureBytes)
             Some(&rekord.spec.hashed_rekord_v002.signature.content)
         }
         _ => None,
     };
 
-    if let Some(rekor_sig_b64) = rekor_sig_b64 {
+    if let Some(rekor_sig) = rekor_sig {
         // Get the signature from the bundle (only for MessageSignature, not DSSE)
         if let SignatureContent::MessageSignature(sig) = &bundle.content {
-            let bundle_sig_b64 = &sig.signature;
+            let bundle_sig = &sig.signature;
 
-            // Compare signatures
-            if bundle_sig_b64 != rekor_sig_b64 {
+            // Compare signatures (both are SignatureBytes)
+            if bundle_sig != rekor_sig {
                 return Err(Error::Verification(
                     "signature in bundle does not match signature in Rekor entry".to_string(),
                 ));
@@ -262,20 +243,18 @@ fn verify_signature_cryptographically(
 ) -> Result<()> {
     // Only verify for MessageSignature (not DSSE envelopes)
     if let SignatureContent::MessageSignature(_) = &bundle.content {
-        // Extract the signature from Rekor
+        // Extract the signature from Rekor (as bytes)
         let signature_bytes = match body {
             RekorEntryBody::HashedRekordV001(rekord) => {
-                rekord.spec.signature.content.decode().map_err(|e| {
-                    Error::Verification(format!("failed to decode signature: {}", e))
-                })?
+                rekord.spec.signature.content.as_bytes().to_vec()
             }
             RekorEntryBody::HashedRekordV002(rekord) => rekord
                 .spec
                 .hashed_rekord_v002
                 .signature
                 .content
-                .decode()
-                .map_err(|e| Error::Verification(format!("failed to decode signature: {}", e)))?,
+                .as_bytes()
+                .to_vec(),
             _ => return Ok(()),
         };
 
@@ -284,7 +263,7 @@ fn verify_signature_cryptographically(
         let artifact_hash_from_rekor = match body {
             RekorEntryBody::HashedRekordV001(rekord) => {
                 // v0.0.1: spec.data.hash.value (hex-encoded)
-                *Sha256Hash::from_hex(&rekord.spec.data.hash.value)
+                *Sha256Hash::from_hex(rekord.spec.data.hash.value.as_str())
                     .map_err(|e| {
                         Error::Verification(format!(
                             "invalid hash in Rekor entry for signature verification: {}",
@@ -294,21 +273,21 @@ fn verify_signature_cryptographically(
                     .as_bytes()
             }
             RekorEntryBody::HashedRekordV002(rekord) => {
-                // v0.0.2: spec.hashedRekordV002.data.digest (base64-encoded)
-                *Sha256Hash::from_base64(rekord.spec.hashed_rekord_v002.data.digest.as_str())
+                // v0.0.2: spec.hashedRekordV002.data.digest (Vec<u8>)
+                let hash = Sha256Hash::try_from_slice(&rekord.spec.hashed_rekord_v002.data.digest)
                     .map_err(|e| {
                         Error::Verification(format!(
                             "invalid digest in Rekor entry for signature verification: {}",
                             e
                         ))
-                    })?
-                    .as_bytes()
+                    })?;
+                *hash.as_bytes()
             }
             _ => return Ok(()),
         };
 
         // Get the certificate from the bundle
-        let bundle_cert_b64 = match &bundle.verification_material.content {
+        let bundle_cert = match &bundle.verification_material.content {
             VerificationMaterialContent::X509CertificateChain { certificates } => {
                 certificates.first().map(|c| &c.raw_bytes)
             }
@@ -316,19 +295,12 @@ fn verify_signature_cryptographically(
             _ => None,
         };
 
-        if let Some(bundle_cert_b64) = bundle_cert_b64 {
-            // Decode certificate
-            let cert_der = base64::engine::general_purpose::STANDARD
-                .decode(bundle_cert_b64)
-                .map_err(|e| {
-                    Error::Verification(format!(
-                        "failed to decode certificate for signature verification: {}",
-                        e
-                    ))
-                })?;
+        if let Some(bundle_cert) = bundle_cert {
+            // Get certificate DER bytes directly
+            let cert_der = bundle_cert.as_bytes();
 
             // Parse certificate to extract public key and algorithm
-            let cert_info = sigstore_crypto::x509::parse_certificate_info(&cert_der)?;
+            let cert_info = sigstore_crypto::x509::parse_certificate_info(cert_der)?;
 
             // Verify the signature over the prehashed artifact
             sigstore_crypto::verification::verify_signature_prehashed(
@@ -351,7 +323,7 @@ fn verify_signature_cryptographically(
 
 /// Validate that integrated time is within certificate validity period
 fn validate_integrated_time(entry: &TransparencyLogEntry, bundle: &Bundle) -> Result<()> {
-    let bundle_cert_b64 = match &bundle.verification_material.content {
+    let bundle_cert = match &bundle.verification_material.content {
         VerificationMaterialContent::X509CertificateChain { certificates } => {
             certificates.first().map(|c| &c.raw_bytes)
         }
@@ -359,20 +331,13 @@ fn validate_integrated_time(entry: &TransparencyLogEntry, bundle: &Bundle) -> Re
         _ => None,
     };
 
-    if let Some(bundle_cert_b64) = bundle_cert_b64 {
-        let bundle_cert_der = base64::engine::general_purpose::STANDARD
-            .decode(bundle_cert_b64)
-            .map_err(|e| {
-                Error::Verification(format!(
-                    "failed to decode bundle certificate for time validation: {}",
-                    e
-                ))
-            })?;
+    if let Some(bundle_cert) = bundle_cert {
+        let bundle_cert_der = bundle_cert.as_bytes();
 
         // Only validate integrated time for hashedrekord 0.0.1
         // For 0.0.2 (Rekor v2), integrated_time is not present
         if entry.kind_version.version == "0.0.1" && !entry.integrated_time.is_empty() {
-            let cert = Certificate::from_der(&bundle_cert_der).map_err(|e| {
+            let cert = Certificate::from_der(bundle_cert_der).map_err(|e| {
                 Error::Verification(format!(
                     "failed to parse certificate for time validation: {}",
                     e

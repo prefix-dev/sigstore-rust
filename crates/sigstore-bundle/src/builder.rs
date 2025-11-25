@@ -1,7 +1,5 @@
 //! Bundle builder for creating Sigstore bundles
 
-use base64::Engine;
-use hex::ToHex;
 use sigstore_rekor::entry::LogEntry;
 use sigstore_types::{
     bundle::{
@@ -9,7 +7,8 @@ use sigstore_types::{
         Rfc3161Timestamp, SignatureContent, TimestampVerificationData, TransparencyLogEntry,
         VerificationMaterial, VerificationMaterialContent,
     },
-    Base64Hash, Bundle, DsseEnvelope, MediaType,
+    Bundle, CanonicalizedBody, DerCertificate, DsseEnvelope, LogKeyId, MediaType, Sha256Hash,
+    SignatureBytes, SignedTimestamp, TimestampToken,
 };
 
 /// Builder for creating Sigstore bundles
@@ -44,23 +43,34 @@ impl BundleBuilder {
         self
     }
 
-    /// Set the signing certificate (base64-encoded DER)
-    pub fn certificate(mut self, cert_b64: String) -> Self {
+    /// Set the signing certificate from DER bytes
+    pub fn certificate(mut self, cert_der: Vec<u8>) -> Self {
         self.verification_content = Some(VerificationMaterialContent::Certificate(
             sigstore_types::bundle::CertificateContent {
-                raw_bytes: cert_b64.into(),
+                raw_bytes: DerCertificate::new(cert_der),
             },
         ));
         self
     }
 
-    /// Set the certificate chain (base64-encoded DER)
-    pub fn certificate_chain(mut self, certs_b64: Vec<String>) -> Self {
+    /// Set the signing certificate from base64-encoded DER
+    pub fn certificate_base64(mut self, cert_b64: &str) -> Result<Self, &'static str> {
+        let cert_der = DerCertificate::from_base64(cert_b64).map_err(|_| "invalid base64")?;
+        self.verification_content = Some(VerificationMaterialContent::Certificate(
+            sigstore_types::bundle::CertificateContent {
+                raw_bytes: cert_der,
+            },
+        ));
+        Ok(self)
+    }
+
+    /// Set the certificate chain from DER bytes
+    pub fn certificate_chain(mut self, certs_der: Vec<Vec<u8>>) -> Self {
         self.verification_content = Some(VerificationMaterialContent::X509CertificateChain {
-            certificates: certs_b64
+            certificates: certs_der
                 .into_iter()
                 .map(|c| sigstore_types::bundle::X509Certificate {
-                    raw_bytes: c.into(),
+                    raw_bytes: DerCertificate::new(c),
                 })
                 .collect(),
         });
@@ -79,19 +89,19 @@ impl BundleBuilder {
         self
     }
 
-    /// Add an RFC 3161 timestamp (base64 encoded)
-    pub fn add_rfc3161_timestamp(mut self, signed_timestamp: String) -> Self {
+    /// Add an RFC 3161 timestamp from DER bytes
+    pub fn add_rfc3161_timestamp(mut self, signed_timestamp: Vec<u8>) -> Self {
         self.rfc3161_timestamps.push(Rfc3161Timestamp {
-            signed_timestamp: signed_timestamp.into(),
+            signed_timestamp: TimestampToken::new(signed_timestamp),
         });
         self
     }
 
-    /// Set the message signature (without digest - prefer `message_signature_with_digest` for better compatibility)
-    pub fn message_signature(mut self, signature: String) -> Self {
+    /// Set the message signature from bytes (without digest)
+    pub fn message_signature(mut self, signature: Vec<u8>) -> Self {
         self.signature_content = Some(SignatureContent::MessageSignature(MessageSignature {
             message_digest: None,
-            signature: signature.into(),
+            signature: SignatureBytes::new(signature),
         }));
         self
     }
@@ -99,16 +109,13 @@ impl BundleBuilder {
     /// Set the message signature with digest (recommended for cosign compatibility)
     pub fn message_signature_with_digest(
         mut self,
-        signature: String,
-        digest: impl Into<Base64Hash>,
+        signature: Vec<u8>,
+        digest: Sha256Hash,
         algorithm: sigstore_types::HashAlgorithm,
     ) -> Self {
         self.signature_content = Some(SignatureContent::MessageSignature(MessageSignature {
-            message_digest: Some(sigstore_types::bundle::MessageDigest {
-                algorithm,
-                digest: digest.into(),
-            }),
-            signature: signature.into(),
+            message_digest: Some(sigstore_types::bundle::MessageDigest { algorithm, digest }),
+            signature: SignatureBytes::new(signature),
         }));
         self
     }
@@ -154,7 +161,7 @@ pub struct TlogEntryBuilder {
     kind: String,
     kind_version: String,
     integrated_time: u64,
-    canonicalized_body: String,
+    canonicalized_body: Vec<u8>,
     inclusion_promise: Option<InclusionPromise>,
     inclusion_proof: Option<InclusionProof>,
 }
@@ -168,7 +175,7 @@ impl TlogEntryBuilder {
             kind: "hashedrekord".to_string(),
             kind_version: "0.0.1".to_string(),
             integrated_time: 0,
-            canonicalized_body: String::new(),
+            canonicalized_body: Vec::new(),
             inclusion_promise: None,
             inclusion_proof: None,
         }
@@ -196,7 +203,7 @@ impl TlogEntryBuilder {
             kind: kind.to_string(),
             kind_version: version.to_string(),
             integrated_time: entry.integrated_time as u64,
-            canonicalized_body: entry.body.to_string(),
+            canonicalized_body: entry.body.as_bytes().to_vec(),
             inclusion_promise: None,
             inclusion_proof: None,
         };
@@ -210,28 +217,23 @@ impl TlogEntryBuilder {
             }
 
             if let Some(proof) = &verification.inclusion_proof {
-                // Rekor V1 API returns hashes as hex, but bundle format expects base64
-                // Convert root_hash from hex to base64
-                // TODO: refactor to do serialization / conversion at Serde boundary because this sucks.
-                let root_hash_b64 = hex_to_base64(proof.root_hash.as_str())
-                    .unwrap_or_else(|_| proof.root_hash.to_string());
+                // Rekor V1 API returns hashes as hex, bundle format expects base64
+                // Convert root_hash from hex to Sha256Hash
+                let root_hash = Sha256Hash::from_hex(&proof.root_hash)
+                    .unwrap_or_else(|_| Sha256Hash::from_bytes([0u8; 32]));
 
-                // Convert all proof hashes from hex to base64
-                let hashes_b64: Vec<Base64Hash> = proof
+                // Convert all proof hashes from hex to Sha256Hash
+                let hashes: Vec<Sha256Hash> = proof
                     .hashes
                     .iter()
-                    .map(|h| {
-                        hex_to_base64(h.as_str())
-                            .map(|s| s.into())
-                            .unwrap_or_else(|_| h.clone())
-                    })
+                    .filter_map(|h| Sha256Hash::from_hex(h).ok())
                     .collect();
 
                 builder.inclusion_proof = Some(InclusionProof {
                     log_index: proof.log_index.to_string().into(),
-                    root_hash: root_hash_b64.into(),
+                    root_hash,
                     tree_size: proof.tree_size.to_string(),
-                    hashes: hashes_b64,
+                    hashes,
                     checkpoint: CheckpointData {
                         envelope: proof.checkpoint.clone(),
                     },
@@ -255,12 +257,9 @@ impl TlogEntryBuilder {
     }
 
     /// Set the inclusion promise (Signed Entry Timestamp)
-    pub fn inclusion_promise(
-        mut self,
-        signed_entry_timestamp: impl Into<sigstore_types::Base64Timestamp>,
-    ) -> Self {
+    pub fn inclusion_promise(mut self, signed_entry_timestamp: SignedTimestamp) -> Self {
         self.inclusion_promise = Some(InclusionPromise {
-            signed_entry_timestamp: signed_entry_timestamp.into(),
+            signed_entry_timestamp,
         });
         self
     }
@@ -269,21 +268,21 @@ impl TlogEntryBuilder {
     ///
     /// # Arguments
     /// * `log_index` - The log index
-    /// * `root_hash` - The root hash (base64 encoded)
+    /// * `root_hash` - The root hash
     /// * `tree_size` - The tree size
-    /// * `hashes` - The proof hashes (base64 encoded)
+    /// * `hashes` - The proof hashes
     /// * `checkpoint` - The checkpoint envelope
     pub fn inclusion_proof(
         mut self,
         log_index: u64,
-        root_hash: impl Into<Base64Hash>,
+        root_hash: Sha256Hash,
         tree_size: u64,
-        hashes: Vec<Base64Hash>,
+        hashes: Vec<Sha256Hash>,
         checkpoint: String,
     ) -> Self {
         self.inclusion_proof = Some(InclusionProof {
             log_index: log_index.to_string().into(),
-            root_hash: root_hash.into(),
+            root_hash,
             tree_size: tree_size.to_string(),
             hashes,
             checkpoint: CheckpointData {
@@ -298,7 +297,7 @@ impl TlogEntryBuilder {
         TransparencyLogEntry {
             log_index: self.log_index.to_string().into(),
             log_id: LogId {
-                key_id: self.log_id.into(),
+                key_id: LogKeyId::new(self.log_id),
             },
             kind_version: KindVersion {
                 kind: self.kind,
@@ -307,7 +306,7 @@ impl TlogEntryBuilder {
             integrated_time: self.integrated_time.to_string(),
             inclusion_promise: self.inclusion_promise,
             inclusion_proof: self.inclusion_proof,
-            canonicalized_body: self.canonicalized_body.into(),
+            canonicalized_body: CanonicalizedBody::new(self.canonicalized_body),
         }
     }
 }
@@ -316,12 +315,4 @@ impl Default for TlogEntryBuilder {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Convert a hex string to base64
-///
-/// The Rekor V1 API returns hashes as hex, but the bundle format expects base64.
-fn hex_to_base64(hex_str: &str) -> Result<String, &'static str> {
-    let bytes = hex::decode(hex_str).map_err(|_| "invalid hex")?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }

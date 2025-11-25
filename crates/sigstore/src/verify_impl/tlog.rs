@@ -100,13 +100,10 @@ pub fn verify_checkpoint(
     // Verify that the checkpoint's root hash matches the inclusion proof's root hash
     let checkpoint_root_hash = &signed_note.checkpoint.root_hash;
 
-    // Decode the root hash from the inclusion proof (auto-detects hex or base64 format)
-    let proof_root_hash = sigstore_types::Sha256Hash::from_base64_ref(&inclusion_proof.root_hash)
-        .map_err(|e| {
-        Error::Verification(format!("Failed to decode inclusion proof root hash: {}", e))
-    })?;
+    // The root hash in the inclusion proof is already a Sha256Hash
+    let proof_root_hash = &inclusion_proof.root_hash;
 
-    if checkpoint_root_hash.as_slice() != proof_root_hash.as_slice() {
+    if checkpoint_root_hash.as_slice() != proof_root_hash.as_bytes() {
         return Err(Error::Verification(format!(
             "Checkpoint root hash mismatch: expected {}, got {}",
             hex::encode(checkpoint_root_hash),
@@ -164,8 +161,8 @@ pub fn verify_set(entry: &TransparencyLogEntry, trusted_root: &TrustedRoot) -> R
         .rekor_key_for_log(&entry.log_id.key_id)
         .map_err(|_| Error::Verification(format!("Unknown log ID: {}", entry.log_id.key_id)))?;
 
-    // Construct the payload
-    let body = entry.canonicalized_body.clone().into_string();
+    // Construct the payload (base64-encoded body)
+    let body = entry.canonicalized_body.to_base64();
 
     let integrated_time = entry
         .integrated_time
@@ -192,11 +189,8 @@ pub fn verify_set(entry: &TransparencyLogEntry, trusted_root: &TrustedRoot) -> R
     let canonical_json = serde_json_canonicalizer::to_vec(&payload)
         .map_err(|e| Error::Verification(format!("Canonicalization failed: {}", e)))?;
 
-    // Verify signature
-    let signature = promise
-        .signed_entry_timestamp
-        .decode()
-        .map_err(|_| Error::Verification("Invalid base64 signature".into()))?;
+    // Get signature bytes
+    let signature = promise.signed_entry_timestamp.as_bytes();
 
     verify_signature(
         &log_key_bytes,
