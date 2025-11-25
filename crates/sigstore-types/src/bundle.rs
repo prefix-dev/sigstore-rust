@@ -283,15 +283,17 @@ pub struct InclusionProof {
     pub tree_size: String,
     /// Hashes in the inclusion proof path (base64 encoded)
     pub hashes: Vec<Base64Hash>,
-    /// Checkpoint (signed tree head)
+    /// Checkpoint (signed tree head) - optional
+    #[serde(default, skip_serializing_if = "CheckpointData::is_empty")]
     pub checkpoint: CheckpointData,
 }
 
 /// Checkpoint data in inclusion proof
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckpointData {
     /// Text representation of the checkpoint
+    #[serde(default)]
     pub envelope: String,
 }
 
@@ -299,6 +301,11 @@ impl CheckpointData {
     /// Parse the checkpoint text
     pub fn parse(&self) -> Result<Checkpoint> {
         Checkpoint::from_text(&self.envelope)
+    }
+
+    /// Check if checkpoint data is empty
+    pub fn is_empty(&self) -> bool {
+        self.envelope.is_empty()
     }
 }
 

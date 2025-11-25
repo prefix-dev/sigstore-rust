@@ -21,7 +21,8 @@ pub struct LogEntry {
     /// Integrated time (Unix timestamp)
     pub integrated_time: i64,
     /// Log ID (SHA-256 of the public key)
-    pub log_i_d: String,
+    #[serde(rename = "logID")]
+    pub log_id: String,
     /// Log index
     pub log_index: i64,
     /// Verification data

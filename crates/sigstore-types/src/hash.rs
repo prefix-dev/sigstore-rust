@@ -27,6 +27,7 @@ impl HashAlgorithm {
     }
 
     /// Get the OID for this algorithm
+    // TODO: Use a const_oid type here
     pub fn oid(&self) -> &'static str {
         match self {
             HashAlgorithm::Sha2256 => "2.16.840.1.101.3.4.2.1",
@@ -47,6 +48,7 @@ impl std::fmt::Display for HashAlgorithm {
 }
 
 /// A hash output with its algorithm
+/// TODO: This is unused?
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HashOutput {
     /// The algorithm used to produce this hash

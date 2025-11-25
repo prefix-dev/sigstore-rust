@@ -54,6 +54,7 @@ pub fn generate_positive_nonce_bytes() -> Vec<u8> {
 }
 
 /// Algorithm identifier with optional parameters
+// TODO: use HashAlgorithm enum?
 #[derive(Clone, Debug, Eq, PartialEq, Sequence)]
 pub struct AlgorithmIdentifier {
     /// Algorithm OID

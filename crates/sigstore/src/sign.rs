@@ -288,7 +288,7 @@ impl Signer {
             .map_err(|e| Error::Signing(format!("Failed to create Rekor entry: {}", e)))?;
 
         // Build TlogEntry
-        let log_id_bytes = hex::decode(&log_entry.log_i_d)
+        let log_id_bytes = hex::decode(&log_entry.log_id)
             .map_err(|e| Error::Signing(format!("Failed to decode log ID: {}", e)))?;
         let log_id_base64 = base64::engine::general_purpose::STANDARD.encode(&log_id_bytes);
 

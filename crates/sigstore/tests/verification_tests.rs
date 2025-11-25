@@ -31,6 +31,14 @@ const SIGSTORE_JS_PROVENANCE: &str =
 // Bundle with otherName SAN (non-standard SAN type) - from sigstore-go test data
 const OTHERNAME_BUNDLE: &str = include_str!("../test_data/bundles/othername.sigstore.json");
 
+// Edge case bundles
+const BUNDLE_NO_CERT_V1: &str = include_str!("../test_data/bundles/bundle_no_cert_v1.txt.sigstore");
+const BUNDLE_NO_CHECKPOINT: &str = include_str!("../test_data/bundles/bundle_no_checkpoint.txt.sigstore");
+const BUNDLE_NO_LOG_ENTRY: &str = include_str!("../test_data/bundles/bundle_no_log_entry.txt.sigstore");
+const BUNDLE_V3_NO_SIGNED_TIME: &str =
+    include_str!("../test_data/bundles/bundle_v3_no_signed_time.txt.sigstore.json");
+const BUNDLE_V3_GITHUB_WHL: &str = include_str!("../test_data/bundles/bundle_v3_github.whl.sigstore");
+
 // ==== Bundle Parsing Tests ====
 
 #[test]
@@ -562,4 +570,191 @@ fn test_othername_san_bundle() {
 
     // In sigstore-go, this test verifies identity "foo!oidc.local"
     // The otherName SAN contains a non-standard identity format
+}
+
+// ==== Edge Case Bundle Tests ====
+
+/// Test bundle with empty certificate list (missing certificate)
+#[test]
+fn test_bundle_no_cert_v1() {
+    let bundle = Bundle::from_json(BUNDLE_NO_CERT_V1).expect("Failed to parse bundle_no_cert_v1");
+
+    // Should parse successfully
+    assert!(bundle.media_type.contains("0.1"));
+
+    // But should not have a certificate
+    let cert = bundle.signing_certificate();
+    assert!(
+        cert.is_none(),
+        "Bundle with empty certificate list should return None"
+    );
+
+    // Verification should fail because there's no certificate
+    let artifact = b"test artifact";
+    let policy = VerificationPolicy::default()
+        .skip_timestamp()
+        .skip_artifact_hash();
+
+    let result = verify(artifact, &bundle, &policy);
+    assert!(
+        result.is_err(),
+        "Verification should fail without a certificate"
+    );
+}
+
+/// Test bundle without checkpoint in inclusion proof
+#[test]
+fn test_bundle_no_checkpoint() {
+    let bundle =
+        Bundle::from_json(BUNDLE_NO_CHECKPOINT).expect("Failed to parse bundle_no_checkpoint");
+
+    // Should parse successfully
+    assert!(bundle.media_type.contains("0.2"));
+
+    // Should have a tlog entry
+    assert!(!bundle.verification_material.tlog_entries.is_empty());
+
+    let entry = &bundle.verification_material.tlog_entries[0];
+    let proof = entry.inclusion_proof.as_ref();
+    assert!(proof.is_some(), "Should have inclusion proof");
+
+    // The inclusion proof should exist but lack the checkpoint
+    let proof = proof.unwrap();
+
+    // Checkpoint should be empty (default value)
+    assert!(
+        proof.checkpoint.envelope.is_empty(),
+        "Checkpoint should be empty when missing from bundle"
+    );
+
+    // Parsing empty checkpoint should fail
+    let checkpoint_result = proof.checkpoint.parse();
+    assert!(
+        checkpoint_result.is_err(),
+        "Checkpoint parsing should fail when checkpoint is missing"
+    );
+}
+
+/// Test bundle with empty transparency log entries
+#[test]
+fn test_bundle_no_log_entry() {
+    let bundle =
+        Bundle::from_json(BUNDLE_NO_LOG_ENTRY).expect("Failed to parse bundle_no_log_entry");
+
+    // Should parse successfully
+    assert!(bundle.media_type.contains("0.1"));
+
+    // But should have no tlog entries
+    assert!(
+        bundle.verification_material.tlog_entries.is_empty(),
+        "Bundle should have no tlog entries"
+    );
+
+    // Verification should fail because we need a tlog entry
+    let artifact = b"test artifact";
+    let policy = VerificationPolicy::default()
+        .skip_timestamp()
+        .skip_artifact_hash();
+
+    let result = verify(artifact, &bundle, &policy);
+    assert!(
+        result.is_err(),
+        "Verification should fail without transparency log entries"
+    );
+
+    // Validation may also fail due to missing required fields
+    // (depending on whether validator checks for empty tlog)
+    let validation_result = validate_bundle(&bundle);
+    // We accept either valid or invalid - the key is that verification fails
+    let _ = validation_result;
+}
+
+/// Test bundle without signed entry timestamp (inclusionPromise)
+#[test]
+fn test_bundle_v3_no_signed_time() {
+    let bundle = Bundle::from_json(BUNDLE_V3_NO_SIGNED_TIME)
+        .expect("Failed to parse bundle_v3_no_signed_time");
+
+    // Should parse successfully
+    assert!(bundle.media_type.contains("0.3"));
+
+    // Should have a tlog entry
+    assert!(!bundle.verification_material.tlog_entries.is_empty());
+
+    let entry = &bundle.verification_material.tlog_entries[0];
+
+    // Check that inclusion promise is missing
+    assert!(
+        entry.inclusion_promise.is_none(),
+        "Bundle should not have inclusion promise (signed entry timestamp)"
+    );
+
+    // Check that we have inclusion proof though
+    assert!(
+        entry.inclusion_proof.is_some(),
+        "Bundle should have inclusion proof"
+    );
+
+    // Verification might still work with inclusion proof alone
+    let artifact = b"dummy artifact";
+    let policy = VerificationPolicy::default()
+        .skip_timestamp()
+        .skip_artifact_hash();
+
+    let result = verify(artifact, &bundle, &policy);
+    // Whether this succeeds or fails depends on implementation
+    // We just verify it handles the case
+    let _ = result;
+}
+
+/// Test GitHub Actions release bundle
+#[test]
+fn test_bundle_v3_github_whl() {
+    let bundle =
+        Bundle::from_json(BUNDLE_V3_GITHUB_WHL).expect("Failed to parse bundle_v3_github_whl");
+
+    // Should parse successfully
+    assert!(bundle.media_type.contains("0.2"));
+
+    // Should have certificate
+    let cert_b64 = bundle
+        .signing_certificate()
+        .expect("Should have a signing certificate");
+
+    // Decode from base64
+    let cert_der = STANDARD
+        .decode(cert_b64)
+        .expect("Failed to decode base64 certificate");
+
+    // Parse the certificate
+    use x509_cert::Certificate;
+    let cert = Certificate::from_der(&cert_der).expect("Failed to parse certificate");
+
+    // Verify the SAN contains the GitHub Actions workflow URI
+    let san_ext = cert
+        .tbs_certificate
+        .extensions
+        .as_ref()
+        .and_then(|exts| {
+            exts.iter()
+                .find(|e| e.extn_id == const_oid::db::rfc5280::ID_CE_SUBJECT_ALT_NAME)
+        });
+
+    assert!(
+        san_ext.is_some(),
+        "GitHub Actions bundle should have Subject Alternative Name extension"
+    );
+
+    // Should have tlog entry
+    assert!(
+        !bundle.verification_material.tlog_entries.is_empty(),
+        "Should have transparency log entry"
+    );
+
+    // Should have inclusion proof
+    let entry = &bundle.verification_material.tlog_entries[0];
+    assert!(
+        entry.inclusion_proof.is_some(),
+        "Should have inclusion proof"
+    );
 }

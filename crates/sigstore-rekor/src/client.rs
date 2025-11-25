@@ -203,7 +203,7 @@ impl RekorClient {
             uuid: "".to_string(), // V2 response doesn't include UUID in body
             body: entry_v2.canonicalized_body.into_string(),
             integrated_time,
-            log_i_d: entry_v2.log_id.key_id.to_string(),
+            log_id: entry_v2.log_id.key_id.to_string(),
             log_index,
             verification,
         })
