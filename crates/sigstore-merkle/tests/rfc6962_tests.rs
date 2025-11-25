@@ -184,7 +184,11 @@ fn test_inclusion_two_leaves_left() {
     let hash1 = hash_leaf(b"leaf 1");
     let root = hash_children(&hash0, &hash1);
     let result = verify_inclusion_proof(&hash0, 0, 2, &[hash1], &root);
-    assert!(result.is_ok(), "Left leaf verification failed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Left leaf verification failed: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -193,7 +197,11 @@ fn test_inclusion_two_leaves_right() {
     let hash1 = hash_leaf(b"leaf 1");
     let root = hash_children(&hash0, &hash1);
     let result = verify_inclusion_proof(&hash1, 1, 2, &[hash0], &root);
-    assert!(result.is_ok(), "Right leaf verification failed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Right leaf verification failed: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -239,7 +247,11 @@ fn test_inclusion_zero_tree_size() {
 fn test_consistency_same_size() {
     let root = hash_leaf(b"test");
     let result = sigstore_merkle::verify_consistency_proof(1, 1, &[], &root, &root);
-    assert!(result.is_ok(), "Same size consistency should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Same size consistency should succeed: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -266,7 +278,11 @@ fn test_hash_leaf_format() {
     raw_data.extend_from_slice(data);
     let expected = sigstore_crypto::sha256(&raw_data);
 
-    assert_eq!(hash.as_bytes(), &expected, "hash_leaf should use 0x00 prefix");
+    assert_eq!(
+        hash.as_bytes(),
+        &expected,
+        "hash_leaf should use 0x00 prefix"
+    );
 }
 
 #[test]
@@ -280,5 +296,9 @@ fn test_hash_children_format() {
     raw_data.extend_from_slice(right.as_bytes());
     let expected = sigstore_crypto::sha256(&raw_data);
 
-    assert_eq!(hash.as_bytes(), &expected, "hash_children should use 0x01 prefix");
+    assert_eq!(
+        hash.as_bytes(),
+        &expected,
+        "hash_children should use 0x01 prefix"
+    );
 }

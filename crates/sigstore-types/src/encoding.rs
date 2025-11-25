@@ -238,6 +238,119 @@ impl AsRef<str> for Hex {
     }
 }
 
+impl std::fmt::Display for Hex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Hex-encoded transparency log ID (SHA-256 hash of the log's public key)
+///
+/// This is returned by the Rekor V1 API. The V2 API returns base64-encoded
+/// key IDs instead (see `LogKeyId`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct HexLogId(Hex);
+
+impl HexLogId {
+    /// Create a new HexLogId from a hex string
+    pub fn new(s: String) -> Self {
+        HexLogId(Hex::new(s))
+    }
+
+    /// Create from raw bytes (will be hex-encoded)
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        HexLogId(Hex::encode(bytes))
+    }
+
+    /// Decode to raw bytes
+    pub fn decode(&self) -> Result<Vec<u8>> {
+        self.0.decode()
+    }
+
+    /// Convert to base64 encoding (for bundle format)
+    pub fn to_base64(&self) -> Result<String> {
+        let bytes = self.decode()?;
+        Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+    }
+
+    /// Get the underlying hex string
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    /// Convert into the underlying String
+    pub fn into_string(self) -> String {
+        self.0.into_string()
+    }
+}
+
+impl From<String> for HexLogId {
+    fn from(s: String) -> Self {
+        HexLogId::new(s)
+    }
+}
+
+impl AsRef<str> for HexLogId {
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+impl std::fmt::Display for HexLogId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// UUID for a Rekor log entry
+///
+/// This is the unique identifier for an entry in the transparency log,
+/// typically returned as the key in the response map.
+#[derive(Default, Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct EntryUuid(String);
+
+impl EntryUuid {
+    /// Create a new EntryUuid
+    pub fn new(s: String) -> Self {
+        EntryUuid(s)
+    }
+
+    /// Get the underlying string slice
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Convert into the underlying String
+    pub fn into_string(self) -> String {
+        self.0
+    }
+
+    /// Check if the UUID is empty
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl From<String> for EntryUuid {
+    fn from(s: String) -> Self {
+        EntryUuid::new(s)
+    }
+}
+
+impl AsRef<str> for EntryUuid {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for EntryUuid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 // ============================================================================
 // Identifier Types
 // ============================================================================
@@ -504,6 +617,78 @@ impl<'de> serde::Deserialize<'de> for Sha256Hash {
         let s = String::deserialize(deserializer)?;
         // Auto-detect hex or base64 format for compatibility
         Sha256Hash::from_hex_or_base64(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+// ============================================================================
+// Serde helper modules for base64 encoding
+// ============================================================================
+
+/// Serde helper for base64 encoding/decoding of byte arrays
+///
+/// Use this with `#[serde(with = "base64_bytes")]` on `Vec<u8>` fields
+/// that should be serialized as base64 strings in JSON.
+///
+/// # Example
+/// ```ignore
+/// use serde::{Deserialize, Serialize};
+/// use sigstore_types::encoding::base64_bytes;
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct MyStruct {
+///     #[serde(with = "base64_bytes")]
+///     pub data: Vec<u8>,
+/// }
+/// ```
+pub mod base64_bytes {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&STANDARD.encode(bytes))
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        STANDARD.decode(s).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Serde helper for optional base64 encoding/decoding of byte arrays
+///
+/// Use this with `#[serde(with = "base64_bytes_option")]` on `Option<Vec<u8>>` fields.
+pub mod base64_bytes_option {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(bytes: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match bytes {
+            Some(b) => serializer.serialize_some(&STANDARD.encode(b)),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let opt: Option<String> = Option::deserialize(deserializer)?;
+        match opt {
+            Some(s) => STANDARD
+                .decode(s)
+                .map(Some)
+                .map_err(serde::de::Error::custom),
+            None => Ok(None),
+        }
     }
 }
 

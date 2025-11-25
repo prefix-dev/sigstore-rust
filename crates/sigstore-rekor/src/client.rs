@@ -84,7 +84,7 @@ impl RekorClient {
             .next()
             .ok_or_else(|| Error::Api("empty response".to_string()))?;
 
-        entry.uuid = entry_uuid;
+        entry.uuid = entry_uuid.into();
         Ok(entry)
     }
 
@@ -116,7 +116,7 @@ impl RekorClient {
             .next()
             .ok_or_else(|| Error::Api("empty response".to_string()))?;
 
-        entry.uuid = entry_uuid;
+        entry.uuid = entry_uuid.into();
         Ok(entry)
     }
 
@@ -150,7 +150,7 @@ impl RekorClient {
             .next()
             .ok_or_else(|| Error::Api("empty response".to_string()))?;
 
-        entry.uuid = entry_uuid;
+        entry.uuid = entry_uuid.into();
         Ok(entry)
     }
 
@@ -200,10 +200,10 @@ impl RekorClient {
         });
 
         Ok(LogEntry {
-            uuid: "".to_string(), // V2 response doesn't include UUID in body
-            body: entry_v2.canonicalized_body.into_string(),
+            uuid: Default::default(), // V2 response doesn't include UUID in body
+            body: entry_v2.canonicalized_body,
             integrated_time,
-            log_id: entry_v2.log_id.key_id.to_string(),
+            log_id: entry_v2.log_id.key_id.into_string().into(),
             log_index,
             verification,
         })
@@ -239,7 +239,7 @@ impl RekorClient {
             .next()
             .ok_or_else(|| Error::Api("empty response".to_string()))?;
 
-        entry.uuid = entry_uuid;
+        entry.uuid = entry_uuid.into();
         Ok(entry)
     }
 

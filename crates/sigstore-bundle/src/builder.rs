@@ -1,5 +1,6 @@
 //! Bundle builder for creating Sigstore bundles
 
+use sigstore_rekor::entry::LogEntry;
 use sigstore_types::{
     bundle::{
         CheckpointData, InclusionPromise, InclusionProof, KindVersion, LogId, MessageSignature,
@@ -154,34 +155,66 @@ impl TlogEntryBuilder {
         }
     }
 
+    /// Create a tlog entry builder from a Rekor LogEntry response
+    ///
+    /// This method extracts all relevant fields from a Rekor API response
+    /// and populates the builder automatically.
+    ///
+    /// # Arguments
+    /// * `entry` - The LogEntry returned from the Rekor API
+    /// * `kind` - The entry kind (e.g., "hashedrekord", "dsse")
+    /// * `version` - The entry version (e.g., "0.0.1")
+    pub fn from_log_entry(entry: &LogEntry, kind: &str, version: &str) -> Self {
+        // Convert hex log_id to base64 using the type-safe method
+        let log_id_base64 = entry
+            .log_id
+            .to_base64()
+            .unwrap_or_else(|_| entry.log_id.to_string());
+
+        let mut builder = Self {
+            log_index: entry.log_index as u64,
+            log_id: log_id_base64,
+            kind: kind.to_string(),
+            kind_version: version.to_string(),
+            integrated_time: entry.integrated_time as u64,
+            canonicalized_body: entry.body.to_string(),
+            inclusion_promise: None,
+            inclusion_proof: None,
+        };
+
+        // Add verification data if present
+        if let Some(verification) = &entry.verification {
+            if let Some(set) = &verification.signed_entry_timestamp {
+                builder.inclusion_promise = Some(InclusionPromise {
+                    signed_entry_timestamp: set.clone(),
+                });
+            }
+
+            if let Some(proof) = &verification.inclusion_proof {
+                builder.inclusion_proof = Some(InclusionProof {
+                    log_index: proof.log_index.to_string().into(),
+                    root_hash: proof.root_hash.clone(),
+                    tree_size: proof.tree_size.to_string(),
+                    hashes: proof.hashes.clone(),
+                    checkpoint: CheckpointData {
+                        envelope: proof.checkpoint.clone(),
+                    },
+                });
+            }
+        }
+
+        builder
+    }
+
     /// Set the log index
     pub fn log_index(mut self, index: u64) -> Self {
         self.log_index = index;
         self
     }
 
-    /// Set the log ID (base64 encoded)
-    pub fn log_id(mut self, id: String) -> Self {
-        self.log_id = id;
-        self
-    }
-
-    /// Set the entry kind
-    pub fn kind(mut self, kind: String, version: String) -> Self {
-        self.kind = kind;
-        self.kind_version = version;
-        self
-    }
-
     /// Set the integrated time (Unix timestamp)
     pub fn integrated_time(mut self, time: u64) -> Self {
         self.integrated_time = time;
-        self
-    }
-
-    /// Set the canonicalized body (base64 encoded)
-    pub fn canonicalized_body(mut self, body: String) -> Self {
-        self.canonicalized_body = body;
         self
     }
 

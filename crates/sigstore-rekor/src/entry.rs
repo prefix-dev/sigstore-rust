@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sigstore_crypto::{PublicKeyPem, Signature};
 use sigstore_types::{
     Base64Body, Base64Der, Base64Hash, Base64Pem, Base64Signature, Base64Timestamp, CheckpointData,
-    InclusionPromise, KindVersion, LogId, Sha256Hash,
+    EntryUuid, HashAlgorithm, HexLogId, InclusionPromise, KindVersion, LogId, Sha256Hash,
 };
 use std::collections::HashMap;
 
@@ -15,14 +15,14 @@ use std::collections::HashMap;
 pub struct LogEntry {
     /// UUID of the entry (the key in the response map)
     #[serde(skip)]
-    pub uuid: String,
-    /// Body of the entry (base64 encoded)
-    pub body: String,
+    pub uuid: EntryUuid,
+    /// Body of the entry (base64 encoded canonicalized body)
+    pub body: Base64Body,
     /// Integrated time (Unix timestamp)
     pub integrated_time: i64,
-    /// Log ID (SHA-256 of the public key)
+    /// Log ID (hex-encoded SHA-256 of the log's public key)
     #[serde(rename = "logID")]
-    pub log_id: String,
+    pub log_id: HexLogId,
     /// Log index
     pub log_index: i64,
     /// Verification data
@@ -196,8 +196,9 @@ pub struct HashedRekordData {
 /// Hash in HashedRekord
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HashedRekordHash {
-    /// Hash algorithm
-    pub algorithm: String,
+    /// Hash algorithm (serializes as lowercase for Rekor API)
+    #[serde(with = "sigstore_types::hash::hash_algorithm_lowercase")]
+    pub algorithm: HashAlgorithm,
     /// Hash value (hex encoded)
     pub value: String,
 }
@@ -237,7 +238,7 @@ impl HashedRekord {
             spec: HashedRekordSpec {
                 data: HashedRekordData {
                     hash: HashedRekordHash {
-                        algorithm: "sha256".to_string(),
+                        algorithm: HashAlgorithm::Sha2256,
                         value: artifact_hash.to_hex(),
                     },
                 },
@@ -387,7 +388,7 @@ mod tests {
         );
         assert_eq!(entry.kind, "hashedrekord");
         assert_eq!(entry.api_version, "0.0.1");
-        assert_eq!(entry.spec.data.hash.algorithm, "sha256");
+        assert_eq!(entry.spec.data.hash.algorithm, HashAlgorithm::Sha2256);
         assert_eq!(
             entry.spec.data.hash.value,
             "0000000000000000000000000000000000000000000000000000000000000000"
@@ -407,5 +408,20 @@ mod tests {
         );
         assert!(!entry.request.digest.as_str().is_empty());
         assert_eq!(entry.request.signature.content.as_str(), "c2lnbmF0dXJl");
+    }
+
+    #[test]
+    fn test_hashed_rekord_serializes_lowercase_algorithm() {
+        let entry = HashedRekord::new(
+            &Sha256Hash::from_bytes([0u8; 32]),
+            &Signature::from_bytes(b"signature"),
+            &PublicKeyPem::new(
+                "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----".to_string(),
+            ),
+        );
+        let json = serde_json::to_string(&entry).unwrap();
+        // Verify the algorithm is serialized as lowercase "sha256" for Rekor API
+        assert!(json.contains("\"algorithm\":\"sha256\""));
+        assert!(!json.contains("SHA2_256"));
     }
 }

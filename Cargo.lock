@@ -1640,6 +1640,7 @@ dependencies = [
  "serde_json",
  "sigstore-crypto",
  "sigstore-merkle",
+ "sigstore-rekor",
  "sigstore-tsa",
  "sigstore-types",
  "thiserror 2.0.17",

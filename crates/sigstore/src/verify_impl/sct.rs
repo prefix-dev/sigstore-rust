@@ -437,10 +437,7 @@ mod tests {
         let dummy_issuer_spki = vec![1, 2, 3, 4];
 
         let result = extract_sct(&cert, &dummy_issuer_spki);
-        assert!(
-            result.is_err(),
-            "Should fail when SCT extension is missing"
-        );
+        assert!(result.is_err(), "Should fail when SCT extension is missing");
 
         let err_msg = format!("{:?}", result.err());
         assert!(

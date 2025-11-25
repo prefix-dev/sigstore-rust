@@ -5,7 +5,7 @@ use base64::Engine;
 use chrono::{DateTime, Utc};
 use rustls_pki_types::CertificateDer;
 use serde::{Deserialize, Serialize};
-use sigstore_types::{Base64Der, LogKeyId};
+use sigstore_types::{Base64Der, HashAlgorithm, LogKeyId};
 use std::collections::HashMap;
 
 /// TSA certificate with optional validity period (start, end)
@@ -47,7 +47,7 @@ pub struct TransparencyLog {
     pub base_url: String,
 
     /// Hash algorithm used
-    pub hash_algorithm: String,
+    pub hash_algorithm: HashAlgorithm,
 
     /// Public key for verification
     pub public_key: PublicKey,
@@ -83,7 +83,7 @@ pub struct CertificateTransparencyLog {
     pub base_url: String,
 
     /// Hash algorithm used
-    pub hash_algorithm: String,
+    pub hash_algorithm: HashAlgorithm,
 
     /// Public key for verification
     pub public_key: PublicKey,

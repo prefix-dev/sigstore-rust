@@ -33,11 +33,14 @@ const OTHERNAME_BUNDLE: &str = include_str!("../test_data/bundles/othername.sigs
 
 // Edge case bundles
 const BUNDLE_NO_CERT_V1: &str = include_str!("../test_data/bundles/bundle_no_cert_v1.txt.sigstore");
-const BUNDLE_NO_CHECKPOINT: &str = include_str!("../test_data/bundles/bundle_no_checkpoint.txt.sigstore");
-const BUNDLE_NO_LOG_ENTRY: &str = include_str!("../test_data/bundles/bundle_no_log_entry.txt.sigstore");
+const BUNDLE_NO_CHECKPOINT: &str =
+    include_str!("../test_data/bundles/bundle_no_checkpoint.txt.sigstore");
+const BUNDLE_NO_LOG_ENTRY: &str =
+    include_str!("../test_data/bundles/bundle_no_log_entry.txt.sigstore");
 const BUNDLE_V3_NO_SIGNED_TIME: &str =
     include_str!("../test_data/bundles/bundle_v3_no_signed_time.txt.sigstore.json");
-const BUNDLE_V3_GITHUB_WHL: &str = include_str!("../test_data/bundles/bundle_v3_github.whl.sigstore");
+const BUNDLE_V3_GITHUB_WHL: &str =
+    include_str!("../test_data/bundles/bundle_v3_github.whl.sigstore");
 
 // ==== Bundle Parsing Tests ====
 
@@ -518,14 +521,10 @@ fn test_github_actions_provenance_bundle() {
     // etc.
 
     // Verify the SAN contains the expected GitHub Actions workflow URI
-    let san_ext = cert
-        .tbs_certificate
-        .extensions
-        .as_ref()
-        .and_then(|exts| {
-            exts.iter()
-                .find(|e| e.extn_id == const_oid::db::rfc5280::ID_CE_SUBJECT_ALT_NAME)
-        });
+    let san_ext = cert.tbs_certificate.extensions.as_ref().and_then(|exts| {
+        exts.iter()
+            .find(|e| e.extn_id == const_oid::db::rfc5280::ID_CE_SUBJECT_ALT_NAME)
+    });
 
     assert!(
         san_ext.is_some(),
@@ -554,14 +553,10 @@ fn test_othername_san_bundle() {
     let cert = Certificate::from_der(&cert_der).expect("Failed to parse certificate");
 
     // Verify the certificate has a SAN extension (otherName type)
-    let san_ext = cert
-        .tbs_certificate
-        .extensions
-        .as_ref()
-        .and_then(|exts| {
-            exts.iter()
-                .find(|e| e.extn_id == const_oid::db::rfc5280::ID_CE_SUBJECT_ALT_NAME)
-        });
+    let san_ext = cert.tbs_certificate.extensions.as_ref().and_then(|exts| {
+        exts.iter()
+            .find(|e| e.extn_id == const_oid::db::rfc5280::ID_CE_SUBJECT_ALT_NAME)
+    });
 
     assert!(
         san_ext.is_some(),
@@ -731,14 +726,10 @@ fn test_bundle_v3_github_whl() {
     let cert = Certificate::from_der(&cert_der).expect("Failed to parse certificate");
 
     // Verify the SAN contains the GitHub Actions workflow URI
-    let san_ext = cert
-        .tbs_certificate
-        .extensions
-        .as_ref()
-        .and_then(|exts| {
-            exts.iter()
-                .find(|e| e.extn_id == const_oid::db::rfc5280::ID_CE_SUBJECT_ALT_NAME)
-        });
+    let san_ext = cert.tbs_certificate.extensions.as_ref().and_then(|exts| {
+        exts.iter()
+            .find(|e| e.extn_id == const_oid::db::rfc5280::ID_CE_SUBJECT_ALT_NAME)
+    });
 
     assert!(
         san_ext.is_some(),

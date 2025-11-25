@@ -44,7 +44,10 @@ pub fn verify_inclusion_proof(
     if proof_hashes.len() != expected_proof_len {
         return Err(Error::InvalidProof(format!(
             "expected {} proof hashes for leaf {} in tree of size {}, got {}",
-            expected_proof_len, leaf_index, tree_size, proof_hashes.len()
+            expected_proof_len,
+            leaf_index,
+            tree_size,
+            proof_hashes.len()
         )));
     }
 

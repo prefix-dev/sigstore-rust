@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use sigstore_types::encoding::{Base64, Base64Signature, Hex};
+use sigstore_types::HashAlgorithm;
 
 /// Parsed Rekor entry body
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,7 +45,7 @@ pub struct HashedRekordV001Data {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HashValue {
-    pub algorithm: String,
+    pub algorithm: HashAlgorithm,
     /// Hex-encoded hash value (used in v0.0.1)
     pub value: Hex,
 }
@@ -139,14 +140,14 @@ pub struct DsseV001Spec {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvelopeHash {
-    pub algorithm: String,
+    pub algorithm: HashAlgorithm,
     pub value: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PayloadHashV001 {
-    pub algorithm: String,
+    pub algorithm: HashAlgorithm,
     /// Hash value (hex or base64-encoded depending on algorithm)
     pub value: String,
 }
@@ -183,7 +184,7 @@ pub struct DsseV002Data {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PayloadHash {
-    pub algorithm: String,
+    pub algorithm: HashAlgorithm,
     /// Base64-encoded hash digest
     pub digest: Base64,
 }

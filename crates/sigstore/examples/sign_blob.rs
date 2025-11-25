@@ -98,39 +98,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 6. Bundle: Construct Sigstore Bundle
     println!("Constructing bundle...");
 
-    // Convert log_id from hex to base64 (Rekor returns hex, bundle expects base64)
-    let log_id_bytes = hex::decode(&log_entry.log_i_d)?;
-    let log_id_base64 =
-        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &log_id_bytes);
-
-    // Create Tlog entry for bundle
-    let mut tlog_builder = TlogEntryBuilder::new()
-        .log_index(log_entry.log_index as u64)
-        .log_id(log_id_base64)
-        .kind("hashedrekord".to_string(), "0.0.1".to_string())
-        .integrated_time(log_entry.integrated_time as u64)
-        .canonicalized_body(log_entry.body); // This is already base64 encoded in the response
-
-    // Add inclusion promise (SET) and inclusion proof if available
-    if let Some(verification) = &log_entry.verification {
-        // Add Signed Entry Timestamp (SET) as inclusion promise
-        if let Some(set) = &verification.signed_entry_timestamp {
-            tlog_builder = tlog_builder.inclusion_promise(set.clone());
-        }
-
-        // Add inclusion proof
-        if let Some(proof) = &verification.inclusion_proof {
-            tlog_builder = tlog_builder.inclusion_proof(
-                proof.log_index as u64,
-                proof.root_hash.clone(),
-                proof.tree_size as u64,
-                proof.hashes.clone(),
-                proof.checkpoint.clone(),
-            );
-        }
-    }
-
-    let tlog_entry = tlog_builder.build();
+    // Create Tlog entry for bundle using the from_log_entry helper
+    // This automatically extracts log_id, inclusion_promise, inclusion_proof, etc.
+    let tlog_entry = TlogEntryBuilder::from_log_entry(&log_entry, "hashedrekord", "0.0.1").build();
 
     // Convert signature to base64 for bundle
     use base64::Engine;

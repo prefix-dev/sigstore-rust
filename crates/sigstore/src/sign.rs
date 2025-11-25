@@ -7,7 +7,7 @@ use crate::crypto::{KeyPair, PublicKeyPem, Signature};
 use crate::error::{Error, Result};
 use crate::rekor::{HashedRekord, RekorClient};
 use crate::types::{Bundle, MediaType, Sha256Hash};
-use base64::Engine;
+use base64::Engine as _;
 use sigstore_crypto::SigningScheme;
 use sigstore_fulcio::FulcioClient;
 use sigstore_oidc::{parse_identity_token, IdentityToken};
@@ -287,33 +287,8 @@ impl Signer {
             .await
             .map_err(|e| Error::Signing(format!("Failed to create Rekor entry: {}", e)))?;
 
-        // Build TlogEntry
-        let log_id_bytes = hex::decode(&log_entry.log_id)
-            .map_err(|e| Error::Signing(format!("Failed to decode log ID: {}", e)))?;
-        let log_id_base64 = base64::engine::general_purpose::STANDARD.encode(&log_id_bytes);
-
-        let mut tlog_builder = TlogEntryBuilder::new()
-            .log_index(log_entry.log_index as u64)
-            .log_id(log_id_base64)
-            .kind("hashedrekord".to_string(), "0.0.1".to_string())
-            .integrated_time(log_entry.integrated_time as u64)
-            .canonicalized_body(log_entry.body);
-
-        if let Some(verification) = &log_entry.verification {
-            if let Some(set) = &verification.signed_entry_timestamp {
-                tlog_builder = tlog_builder.inclusion_promise(set.clone());
-            }
-
-            if let Some(proof) = &verification.inclusion_proof {
-                tlog_builder = tlog_builder.inclusion_proof(
-                    proof.log_index as u64,
-                    proof.root_hash.clone(),
-                    proof.tree_size as u64,
-                    proof.hashes.clone(),
-                    proof.checkpoint.clone(),
-                );
-            }
-        }
+        // Build TlogEntry from the log entry response
+        let tlog_builder = TlogEntryBuilder::from_log_entry(&log_entry, "hashedrekord", "0.0.1");
 
         Ok((tlog_builder, public_key_pem_obj))
     }

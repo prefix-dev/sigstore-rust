@@ -265,49 +265,16 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
         rekor.create_entry(hashed_rekord).await?
     };
 
-    // Build bundle
-    let log_id_bytes = if use_rekor_v2 {
-        base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            &log_entry.log_i_d,
-        )?
-    } else {
-        hex::decode(&log_entry.log_i_d)?
-    };
-    let log_id_base64 =
-        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &log_id_bytes);
-
+    // Build bundle using the from_log_entry helper
     let kind_version = if use_rekor_v2 { "0.0.2" } else { "0.0.1" };
-
-    let mut tlog_builder = TlogEntryBuilder::new()
-        .log_index(log_entry.log_index as u64)
-        .log_id(log_id_base64)
-        .kind("hashedrekord".to_string(), kind_version.to_string())
-        .integrated_time(log_entry.integrated_time as u64)
-        .canonicalized_body(log_entry.body);
-
-    if let Some(verification) = &log_entry.verification {
-        if let Some(set) = &verification.signed_entry_timestamp {
-            tlog_builder = tlog_builder.inclusion_promise(set.clone());
-        }
-
-        if let Some(proof) = &verification.inclusion_proof {
-            // The hashes and root_hash are already Base64Hash types
-            tlog_builder = tlog_builder.inclusion_proof(
-                proof.log_index as u64,
-                proof.root_hash.clone(),
-                proof.tree_size as u64,
-                proof.hashes.clone(),
-                proof.checkpoint.clone(),
-            );
-        }
-    }
+    let tlog_entry =
+        TlogEntryBuilder::from_log_entry(&log_entry, "hashedrekord", kind_version).build();
 
     let mut bundle_builder = BundleBuilder::new()
         .version(MediaType::Bundle0_2)
         .certificate_chain(chain_der_b64)
         .message_signature(signature_b64.clone())
-        .add_tlog_entry(tlog_builder.build());
+        .add_tlog_entry(tlog_entry);
 
     if let Some(tsa_url) = tsa_url {
         eprintln!("Using TSA: {}", tsa_url);

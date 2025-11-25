@@ -9,6 +9,7 @@ use der::{
     Decode, Encode, Sequence,
 };
 use rand::Rng;
+use sigstore_types::HashAlgorithm;
 use x509_cert::{ext::pkix::name::GeneralName, ext::Extensions};
 
 /// OID for SHA-256: 2.16.840.1.101.3.4.2.1
@@ -54,7 +55,6 @@ pub fn generate_positive_nonce_bytes() -> Vec<u8> {
 }
 
 /// Algorithm identifier with optional parameters
-// TODO: use HashAlgorithm enum?
 #[derive(Clone, Debug, Eq, PartialEq, Sequence)]
 pub struct AlgorithmIdentifier {
     /// Algorithm OID
@@ -86,6 +86,26 @@ impl AlgorithmIdentifier {
         Self {
             algorithm: OID_SHA512,
             parameters: None,
+        }
+    }
+
+    /// Try to convert to a HashAlgorithm enum
+    pub fn to_hash_algorithm(&self) -> Option<HashAlgorithm> {
+        match self.algorithm {
+            OID_SHA256 => Some(HashAlgorithm::Sha2256),
+            OID_SHA384 => Some(HashAlgorithm::Sha2384),
+            OID_SHA512 => Some(HashAlgorithm::Sha2512),
+            _ => None,
+        }
+    }
+}
+
+impl From<HashAlgorithm> for AlgorithmIdentifier {
+    fn from(algo: HashAlgorithm) -> Self {
+        match algo {
+            HashAlgorithm::Sha2256 => Self::sha256(),
+            HashAlgorithm::Sha2384 => Self::sha384(),
+            HashAlgorithm::Sha2512 => Self::sha512(),
         }
     }
 }

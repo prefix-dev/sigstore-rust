@@ -667,15 +667,16 @@ mod tests {
 
     // Test data from sigstore-conformance
     const VALID_BUNDLE: &str = include_str!("../test_data/timestamps/valid_bundle.json");
-    const VALID_TRUSTED_ROOT: &str = include_str!("../test_data/timestamps/valid_trusted_root.json");
+    const VALID_TRUSTED_ROOT: &str =
+        include_str!("../test_data/timestamps/valid_trusted_root.json");
     const PAYLOAD_MISMATCH_BUNDLE: &str =
         include_str!("../test_data/timestamps/payload_mismatch_bundle.json");
 
     /// Helper to extract timestamp token from bundle JSON
     fn extract_timestamp_token(bundle_json: &str) -> Vec<u8> {
         let bundle: serde_json::Value = serde_json::from_str(bundle_json).unwrap();
-        let timestamps = &bundle["verificationMaterial"]["timestampVerificationData"]
-            ["rfc3161Timestamps"];
+        let timestamps =
+            &bundle["verificationMaterial"]["timestampVerificationData"]["rfc3161Timestamps"];
         let signed_ts = timestamps[0]["signedTimestamp"].as_str().unwrap();
         STANDARD.decode(signed_ts).unwrap()
     }
