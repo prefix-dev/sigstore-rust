@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-action@nightly
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-action@stable
+        with:
+          components: clippy
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-action@stable
+      - name: Run tests
+        run: cargo test --all-features --workspace
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-action@stable
+      - name: Check documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --all-features --workspace
+
+  conformance:
+    name: Sigstore Conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-action@stable
+
+      - name: Build conformance binary
+        run: cargo build --release --example conformance --package sigstore-verify
+
+      - name: Clone sigstore-conformance
+        run: |
+          git clone --depth 1 https://github.com/sigstore/sigstore-conformance.git
+          cd sigstore-conformance
+          pip install .
+
+      - name: Run sigstore-conformance
+        env:
+          GHA_SIGSTORE_CONFORMANCE_XFAIL: ""
+        run: |
+          pytest sigstore-conformance/test \
+            --entrypoint ./target/release/examples/conformance \
+            --skip-signing \
+            -v
+
+  # Optional: Run full signing tests (requires OIDC token)
+  conformance-signing:
+    name: Sigstore Conformance (with signing)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-action@stable
+
+      - name: Build conformance binary
+        run: cargo build --release --example conformance --package sigstore-verify
+
+      - name: Clone sigstore-conformance
+        run: |
+          git clone --depth 1 https://github.com/sigstore/sigstore-conformance.git
+          cd sigstore-conformance
+          pip install .
+
+      - name: Run sigstore-conformance (with signing)
+        env:
+          GHA_SIGSTORE_CONFORMANCE_XFAIL: ""
+        run: |
+          pytest sigstore-conformance/test \
+            --entrypoint ./target/release/examples/conformance \
+            -v
