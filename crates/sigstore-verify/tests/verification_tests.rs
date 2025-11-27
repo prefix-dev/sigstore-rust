@@ -2,10 +2,10 @@
 //!
 //! These tests validate the complete verification flow using real bundles.
 
+use sigstore_types::LogIndex;
 use sigstore_verify::bundle::{validate_bundle, validate_bundle_with_options, ValidationOptions};
 use sigstore_verify::types::Bundle;
 use sigstore_verify::{verify, VerificationPolicy, Verifier};
-use sigstore_types::LogIndex;
 use x509_cert::der::Decode;
 
 /// Real v0.3 bundle from sigstore-python tests
