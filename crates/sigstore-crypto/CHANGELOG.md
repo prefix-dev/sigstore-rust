@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/wolfv/sigstore-rust/compare/sigstore-crypto-v0.1.1...sigstore-crypto-v0.2.0) - 2025-11-27
+
+### Other
+
+- format
+- remove duplicated types, add license and readme files
+
 ## [0.1.1](https://github.com/wolfv/sigstore-rust/compare/sigstore-crypto-v0.1.0...sigstore-crypto-v0.1.1) - 2025-11-27
 
 ### Fixed
