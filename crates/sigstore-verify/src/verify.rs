@@ -230,11 +230,11 @@ impl Verifier {
             &self.trusted_root,
         )?;
 
-        // (1): Verify that the signing certificate chains to the root of trust
-        //      and is valid at the time of signing.
+        // (1): Verify that the signing certificate chains to the root of trust,
+        //      is valid at the time of signing, and has CODE_SIGNING EKU.
         if policy.verify_certificate {
             crate::verify_impl::helpers::verify_certificate_chain(
-                &cert_der,
+                &bundle.verification_material.content,
                 validation_time,
                 &self.trusted_root,
             )?;
@@ -249,9 +249,7 @@ impl Verifier {
             )?;
         }
 
-        // (3): Verify that the signing certificate conforms to the Sigstore
-        //      X.509 profile and verify against the given `VerificationPolicy`.
-        crate::verify_impl::helpers::verify_x509_profile(&cert_der)?;
+        // (3): Verify against the given `VerificationPolicy`.
 
         // Verify against policy constraints
         if let Some(ref expected_identity) = policy.identity {
