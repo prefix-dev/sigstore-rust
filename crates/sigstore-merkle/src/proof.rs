@@ -4,7 +4,7 @@
 //! The algorithm follows the reference implementations from sigstore-python and sigstore-go.
 
 use crate::error::{Error, Result};
-use crate::tree::{bit_length, hash_children, hash_leaf};
+use crate::tree::{bit_length, hash_children};
 use sigstore_types::Sha256Hash;
 
 /// Verify an inclusion proof for a leaf in a Merkle tree
@@ -283,35 +283,10 @@ fn chain_border_right(seed: &Sha256Hash, proof: &[Sha256Hash]) -> Sha256Hash {
     hash
 }
 
-/// Convenience function to verify inclusion from base64-encoded data
-pub fn verify_inclusion_proof_base64(
-    leaf_data: &[u8],
-    leaf_index: u64,
-    tree_size: u64,
-    proof_hashes_b64: &[String],
-    expected_root_b64: &str,
-) -> Result<()> {
-    let leaf_hash = hash_leaf(leaf_data);
-
-    let proof_hashes: Vec<Sha256Hash> = proof_hashes_b64
-        .iter()
-        .map(|h| Sha256Hash::from_base64(h).map_err(|e| Error::InvalidProof(e.to_string())))
-        .collect::<Result<Vec<_>>>()?;
-
-    let expected_root = Sha256Hash::from_base64(expected_root_b64)
-        .map_err(|e| Error::InvalidProof(e.to_string()))?;
-
-    verify_inclusion_proof(
-        &leaf_hash,
-        leaf_index,
-        tree_size,
-        &proof_hashes,
-        &expected_root,
-    )
-}
-
 #[cfg(test)]
 mod tests {
+    use crate::hash_leaf;
+
     use super::*;
 
     #[test]
