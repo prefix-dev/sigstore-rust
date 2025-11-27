@@ -325,7 +325,8 @@ impl TrustedRoot {
             let chain_len = tsa.cert_chain.certificates.len();
             if chain_len > 2 {
                 for cert_entry in &tsa.cert_chain.certificates[1..chain_len - 1] {
-                    intermediates.push(CertificateDer::from(cert_entry.raw_bytes.as_bytes()).into_owned());
+                    intermediates
+                        .push(CertificateDer::from(cert_entry.raw_bytes.as_bytes()).into_owned());
                 }
             }
         }
