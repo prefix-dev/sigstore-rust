@@ -147,6 +147,32 @@ impl SigningScheme {
             SigningScheme::RsaPkcs1Sha512 => "RSA_PKCS1_SHA512",
         }
     }
+
+    /// Check if this scheme uses SHA-256 for its signature hash.
+    ///
+    /// This is relevant for hashedrekord verification: Rekor always stores SHA-256
+    /// hashes, so only schemes that use SHA-256 can be verified with prehashed
+    /// verification when only the digest is available (not the original artifact).
+    ///
+    /// - Schemes using SHA-256: Can use `verify_signature_prehashed` with Rekor's hash
+    /// - Schemes using SHA-384/512: Cannot use prehashed verification (hash mismatch)
+    /// - Ed25519: Doesn't support prehashed mode
+    pub fn uses_sha256(&self) -> bool {
+        matches!(
+            self,
+            SigningScheme::EcdsaP256Sha256
+                | SigningScheme::RsaPssSha256
+                | SigningScheme::RsaPkcs1Sha256
+        )
+    }
+
+    /// Check if this scheme supports prehashed verification.
+    ///
+    /// Ed25519 doesn't support prehashed verification (it signs the full message).
+    /// ECDSA and RSA schemes support prehashed verification.
+    pub fn supports_prehashed(&self) -> bool {
+        !matches!(self, SigningScheme::Ed25519)
+    }
 }
 
 /// A key pair for signing
