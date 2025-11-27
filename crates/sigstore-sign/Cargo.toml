@@ -8,13 +8,13 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-sigstore-types = { path = "../sigstore-types" }
-sigstore-crypto = { path = "../sigstore-crypto" }
-sigstore-bundle = { path = "../sigstore-bundle" }
-sigstore-rekor = { path = "../sigstore-rekor" }
-sigstore-fulcio = { path = "../sigstore-fulcio" }
-sigstore-oidc = { path = "../sigstore-oidc" }
-sigstore-tsa = { path = "../sigstore-tsa" }
+sigstore-types = { workspace = true }
+sigstore-crypto = { workspace = true }
+sigstore-bundle = { workspace = true }
+sigstore-rekor = { workspace = true }
+sigstore-fulcio = { workspace = true }
+sigstore-oidc = { workspace = true }
+sigstore-tsa = { workspace = true }
 thiserror = { workspace = true }
 base64 = { workspace = true }
 x509-cert = { workspace = true }

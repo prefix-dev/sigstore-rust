@@ -8,7 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-sigstore-types = { path = "../sigstore-types" }
+sigstore-types = { workspace = true }
 aws-lc-rs = { workspace = true }
 sha2 = { workspace = true }
 digest = { workspace = true }

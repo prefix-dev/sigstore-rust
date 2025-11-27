@@ -8,11 +8,11 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-sigstore-types = { path = "../sigstore-types" }
-sigstore-crypto = { path = "../sigstore-crypto" }
-sigstore-merkle = { path = "../sigstore-merkle" }
-sigstore-tsa = { path = "../sigstore-tsa" }
-sigstore-rekor = { path = "../sigstore-rekor" }
+sigstore-types = { workspace = true }
+sigstore-crypto = { workspace = true }
+sigstore-merkle = { workspace = true }
+sigstore-tsa = { workspace = true }
+sigstore-rekor = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

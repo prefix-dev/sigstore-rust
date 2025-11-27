@@ -8,8 +8,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-sigstore-types = { path = "../sigstore-types" }
-sigstore-crypto = { path = "../sigstore-crypto" }
+sigstore-types = { workspace = true }
+sigstore-crypto = { workspace = true }
 thiserror = { workspace = true }
 base64 = { workspace = true }
 hex = { workspace = true }

@@ -8,8 +8,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-sigstore-types = { path = "../sigstore-types" }
-sigstore-crypto = { path = "../sigstore-crypto" }
+sigstore-types = { workspace = true }
+sigstore-crypto = { workspace = true }
 aws-lc-rs = { workspace = true }
 der = { workspace = true }
 const-oid = { workspace = true, features = ["db"] }

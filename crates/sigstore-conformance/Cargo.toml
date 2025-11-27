@@ -13,16 +13,16 @@ name = "conformance"
 path = "src/main.rs"
 
 [dependencies]
-sigstore-sign = { path = "../sigstore-sign" }
-sigstore-verify = { path = "../sigstore-verify" }
-sigstore-types = { path = "../sigstore-types" }
-sigstore-crypto = { path = "../sigstore-crypto" }
-sigstore-fulcio = { path = "../sigstore-fulcio" }
-sigstore-oidc = { path = "../sigstore-oidc" }
-sigstore-rekor = { path = "../sigstore-rekor" }
-sigstore-tsa = { path = "../sigstore-tsa" }
-sigstore-trust-root = { path = "../sigstore-trust-root" }
-sigstore-bundle = { path = "../sigstore-bundle" }
+sigstore-sign = { workspace = true }
+sigstore-verify = { workspace = true }
+sigstore-types = { workspace = true }
+sigstore-crypto = { workspace = true }
+sigstore-fulcio = { workspace = true }
+sigstore-oidc = { workspace = true }
+sigstore-rekor = { workspace = true }
+sigstore-tsa = { workspace = true }
+sigstore-trust-root = { workspace = true }
+sigstore-bundle = { workspace = true }
 tokio = { workspace = true }
 serde_json = { workspace = true }
 base64 = { workspace = true }

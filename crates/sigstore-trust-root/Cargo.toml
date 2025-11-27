@@ -13,8 +13,8 @@ tuf = ["tough", "tokio", "futures", "directories", "url", "tracing"]
 
 [dependencies]
 # Internal dependencies
-sigstore-types = { path = "../sigstore-types" }
-sigstore-crypto = { path = "../sigstore-crypto" }
+sigstore-types = { workspace = true }
+sigstore-crypto = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }

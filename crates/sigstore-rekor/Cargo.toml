@@ -8,9 +8,9 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-sigstore-types = { path = "../sigstore-types" }
-sigstore-crypto = { path = "../sigstore-crypto" }
-sigstore-merkle = { path = "../sigstore-merkle" }
+sigstore-types = { workspace = true }
+sigstore-crypto = { workspace = true }
+sigstore-merkle = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true, features = ["rustls-tls"] }
