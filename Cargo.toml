@@ -50,7 +50,7 @@ tls_codec = { version = "0.4", default-features = false, features = ["derive"] }
 cms = { version = "0.2", default-features = false }
 x509-tsp = { version = "0.1", default-features = false }
 cmpv2 = { version = "0.2", default-features = false }
-rustls-webpki = { version = "0.102", default-features = false, features = ["alloc", "std"] }
+rustls-webpki = { version = "0.102", default-features = false, features = ["alloc", "std", "aws_lc_rs"] }
 rustls-pki-types = { version = "1.13", default-features = false }
 
 # HTTP
