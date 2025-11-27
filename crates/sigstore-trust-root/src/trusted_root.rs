@@ -194,9 +194,7 @@ impl TrustedRoot {
         let mut certs = Vec::new();
         for ca in &self.certificate_authorities {
             for cert_entry in &ca.cert_chain.certificates {
-                certs.push(CertificateDer::from(
-                    cert_entry.raw_bytes.as_bytes().to_vec(),
-                ));
+                certs.push(CertificateDer::from(cert_entry.raw_bytes.as_bytes()).into_owned());
             }
         }
         Ok(certs)
@@ -300,7 +298,7 @@ impl TrustedRoot {
                     (None, None)
                 };
 
-                result.push((CertificateDer::from(cert_der), start, end));
+                result.push((CertificateDer::from(&cert_der[..]).into_owned(), start, end));
             }
         }
 
@@ -313,9 +311,7 @@ impl TrustedRoot {
         for tsa in &self.timestamp_authorities {
             // The last certificate in the chain is typically the root
             if let Some(cert_entry) = tsa.cert_chain.certificates.last() {
-                roots.push(CertificateDer::from(
-                    cert_entry.raw_bytes.as_bytes().to_vec(),
-                ));
+                roots.push(CertificateDer::from(cert_entry.raw_bytes.as_bytes()).into_owned());
             }
         }
         Ok(roots)
@@ -329,9 +325,7 @@ impl TrustedRoot {
             let chain_len = tsa.cert_chain.certificates.len();
             if chain_len > 2 {
                 for cert_entry in &tsa.cert_chain.certificates[1..chain_len - 1] {
-                    intermediates.push(CertificateDer::from(
-                        cert_entry.raw_bytes.as_bytes().to_vec(),
-                    ));
+                    intermediates.push(CertificateDer::from(cert_entry.raw_bytes.as_bytes()).into_owned());
                 }
             }
         }
@@ -345,9 +339,7 @@ impl TrustedRoot {
         for tsa in &self.timestamp_authorities {
             // The first certificate in the chain is the leaf (TSA signing cert)
             if let Some(cert_entry) = tsa.cert_chain.certificates.first() {
-                leaves.push(CertificateDer::from(
-                    cert_entry.raw_bytes.as_bytes().to_vec(),
-                ));
+                leaves.push(CertificateDer::from(cert_entry.raw_bytes.as_bytes()).into_owned());
             }
         }
         Ok(leaves)
