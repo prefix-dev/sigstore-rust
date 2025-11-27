@@ -12,7 +12,7 @@ use sigstore_oidc::parse_identity_token;
 use sigstore_rekor::RekorClient;
 use sigstore_trust_root::TrustedRoot;
 use sigstore_types::{Bundle, MediaType, Sha256Hash, SignatureContent};
-use sigstore_verify::{verify_with_trusted_root, VerificationPolicy};
+use sigstore_verify::{verify, VerificationPolicy};
 
 use std::env;
 use std::fs;
@@ -453,8 +453,7 @@ fn verify_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         let dummy_artifact = vec![];
 
         // Verify the signature with trusted root
-        let result =
-            verify_with_trusted_root(&dummy_artifact, &bundle, &digest_policy, &trusted_root)?;
+        let result = verify(&dummy_artifact, &bundle, &digest_policy, &trusted_root)?;
 
         if !result.success {
             return Err("Verification failed".into());
@@ -466,7 +465,7 @@ fn verify_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         let artifact_data = fs::read(&artifact_or_digest)?;
 
         // Verify with trusted root
-        let result = verify_with_trusted_root(&artifact_data, &bundle, &policy, &trusted_root)?;
+        let result = verify(&artifact_data, &bundle, &policy, &trusted_root)?;
 
         if !result.success {
             return Err("Verification failed".into());

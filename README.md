@@ -114,6 +114,17 @@ let bundle_json = serde_json::to_string_pretty(&bundle)?;
 - Identity-based verification policies
 - Ambient credential detection for CI/CD environments
 
+## Cryptography
+
+This library uses [aws-lc-rs](https://github.com/aws/aws-lc-rs) as its cryptographic backend. AWS-LC is a general-purpose cryptographic library maintained by AWS, based on code from BoringSSL. It provides:
+
+- ECDSA (P-256, P-384) signature verification and signing
+- Ed25519 signature support
+- SHA-256/SHA-384/SHA-512 hashing
+- X.509 certificate parsing and validation
+
+AWS-LC is [FIPS 140-3 validated](https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/4816), making this library suitable for environments with compliance requirements.
+
 ## Minimum Supported Rust Version
 
 Rust 1.70 or later.

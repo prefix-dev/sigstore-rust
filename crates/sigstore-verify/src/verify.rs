@@ -90,6 +90,15 @@ impl VerificationPolicy {
         self
     }
 
+    /// Skip certificate chain verification
+    ///
+    /// WARNING: This is unsafe for production use. Only use for testing
+    /// with bundles that don't chain to the trusted root.
+    pub fn skip_certificate_chain(mut self) -> Self {
+        self.verify_certificate = false;
+        self
+    }
+
     /// Skip artifact hash validation (for digest-only verification)
     pub fn skip_artifact_hash(mut self) -> Self {
         self.skip_artifact_hash = true;
@@ -148,19 +157,17 @@ impl VerificationResult {
 /// A verifier for Sigstore signatures
 pub struct Verifier {
     /// Trusted root containing verification material
-    trusted_root: Option<TrustedRoot>,
+    trusted_root: TrustedRoot,
 }
 
 impl Verifier {
-    /// Create a new verifier with no trusted material
-    pub fn new() -> Self {
-        Self { trusted_root: None }
-    }
-
-    /// Create a verifier from a trusted root
-    pub fn new_with_trusted_root(trusted_root: &TrustedRoot) -> Self {
+    /// Create a new verifier with a trusted root
+    ///
+    /// The trusted root is required and contains all cryptographic material
+    /// needed for verification (Fulcio CA certs, Rekor keys, TSA certs, etc.)
+    pub fn new(trusted_root: &TrustedRoot) -> Self {
         Self {
-            trusted_root: Some(trusted_root.clone()),
+            trusted_root: trusted_root.clone(),
         }
     }
 
@@ -220,25 +227,27 @@ impl Verifier {
         let validation_time = crate::verify_impl::helpers::determine_validation_time(
             bundle,
             &signature_bytes,
-            self.trusted_root.as_ref(),
+            &self.trusted_root,
         )?;
 
         // (1): Verify that the signing certificate chains to the root of trust
         //      and is valid at the time of signing.
-        crate::verify_impl::helpers::verify_certificate_chain(
-            &cert_der,
-            validation_time,
-            self.trusted_root.as_ref(),
-        )?;
+        if policy.verify_certificate {
+            crate::verify_impl::helpers::verify_certificate_chain(
+                &cert_der,
+                validation_time,
+                &self.trusted_root,
+            )?;
 
-        // Also verify the certificate is within its validity period
-        crate::verify_impl::helpers::validate_certificate_time(validation_time, &cert_info)?;
+            // Also verify the certificate is within its validity period
+            crate::verify_impl::helpers::validate_certificate_time(validation_time, &cert_info)?;
 
-        // (2): Verify the signing certificate's SCT.
-        crate::verify_impl::helpers::verify_sct(
-            &bundle.verification_material.content,
-            self.trusted_root.as_ref(),
-        )?;
+            // (2): Verify the signing certificate's SCT.
+            crate::verify_impl::helpers::verify_sct(
+                &bundle.verification_material.content,
+                &self.trusted_root,
+            )?;
+        }
 
         // (3): Verify that the signing certificate conforms to the Sigstore
         //      X.509 profile and verify against the given `VerificationPolicy`.
@@ -274,7 +283,7 @@ impl Verifier {
         if policy.verify_tlog {
             let integrated_time = crate::verify_impl::tlog::verify_tlog_entries(
                 bundle,
-                self.trusted_root.as_ref(),
+                &self.trusted_root,
                 cert_info.not_before,
                 cert_info.not_after,
                 policy.clock_skew_seconds,
@@ -359,33 +368,17 @@ impl Verifier {
     }
 }
 
-impl Default for Verifier {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Convenience function to verify an artifact
-pub fn verify(
-    artifact: &[u8],
-    bundle: &Bundle,
-    policy: &VerificationPolicy,
-) -> Result<VerificationResult> {
-    let verifier = Verifier::new();
-    verifier.verify(artifact, bundle, policy)
-}
-
-/// Verify an artifact against a bundle using a trusted root
+/// Convenience function to verify an artifact against a bundle
 ///
-/// This is the recommended verification method as it uses the trusted root
-/// for all cryptographic material (Rekor keys, Fulcio certs, TSA certs).
-pub fn verify_with_trusted_root(
+/// This uses the trusted root for all cryptographic material
+/// (Rekor keys, Fulcio certs, TSA certs).
+pub fn verify(
     artifact: &[u8],
     bundle: &Bundle,
     policy: &VerificationPolicy,
     trusted_root: &TrustedRoot,
 ) -> Result<VerificationResult> {
-    let verifier = Verifier::new_with_trusted_root(trusted_root);
+    let verifier = Verifier::new(trusted_root);
     verifier.verify(artifact, bundle, policy)
 }
 
@@ -414,11 +407,5 @@ mod tests {
             Some("https://accounts.google.com".to_string())
         );
         assert!(!policy.verify_tlog);
-    }
-
-    #[test]
-    fn test_verifier_creation() {
-        let _verifier = Verifier::new();
-        let _default = Verifier::default();
     }
 }

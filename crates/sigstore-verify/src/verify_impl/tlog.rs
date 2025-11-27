@@ -15,13 +15,13 @@ use sigstore_types::{Bundle, TransparencyLogEntry};
 ///
 /// # Arguments
 /// * `bundle` - The bundle containing transparency log entries
-/// * `trusted_root` - Optional trusted root for cryptographic verification
+/// * `trusted_root` - Trusted root for cryptographic verification
 /// * `not_before` - Certificate validity start time (Unix timestamp)
 /// * `not_after` - Certificate validity end time (Unix timestamp)
 /// * `clock_skew_seconds` - Tolerance in seconds for future time checks
 pub fn verify_tlog_entries(
     bundle: &Bundle,
-    trusted_root: Option<&TrustedRoot>,
+    trusted_root: &TrustedRoot,
     not_before: i64,
     not_after: i64,
     clock_skew_seconds: i64,
@@ -31,20 +31,16 @@ pub fn verify_tlog_entries(
     for entry in &bundle.verification_material.tlog_entries {
         // Verify checkpoint signature if present
         if let Some(ref inclusion_proof) = entry.inclusion_proof {
-            if let Some(trusted_root) = trusted_root {
-                verify_checkpoint(
-                    &inclusion_proof.checkpoint.envelope,
-                    inclusion_proof,
-                    trusted_root,
-                )?;
-            }
+            verify_checkpoint(
+                &inclusion_proof.checkpoint.envelope,
+                inclusion_proof,
+                trusted_root,
+            )?;
         }
 
         // Verify inclusion promise (SET) if present
         if entry.inclusion_promise.is_some() {
-            if let Some(trusted_root) = trusted_root {
-                verify_set(entry, trusted_root)?;
-            }
+            verify_set(entry, trusted_root)?;
         }
 
         // Validate integrated time

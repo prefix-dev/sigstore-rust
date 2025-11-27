@@ -2,11 +2,17 @@
 //!
 //! These tests validate the complete verification flow using real bundles.
 
+use sigstore_trust_root::TrustedRoot;
 use sigstore_types::LogIndex;
 use sigstore_verify::bundle::{validate_bundle, validate_bundle_with_options, ValidationOptions};
 use sigstore_verify::types::Bundle;
 use sigstore_verify::{verify, VerificationPolicy, Verifier};
 use x509_cert::der::Decode;
+
+/// Get the production trusted root for tests
+fn production_root() -> TrustedRoot {
+    TrustedRoot::production().expect("Failed to load production trusted root")
+}
 
 /// Real v0.3 bundle from sigstore-python tests
 const V03_BUNDLE: &str = include_str!("../../sigstore-bundle/tests/fixtures/bundle_v3.json");
@@ -119,15 +125,19 @@ fn test_validate_bundle_merkle_proof() {
 
 #[test]
 fn test_verifier_creation() {
-    let verifier = Verifier::new();
+    let root = production_root();
+    let verifier = Verifier::new(&root);
     let bundle = Bundle::from_json(V03_BUNDLE).unwrap();
 
     // Dummy artifact for testing
     let artifact = b"test artifact";
 
+    // V03_BUNDLE is from sigstore-python tests (staging) - skip crypto verifications
     let policy = VerificationPolicy::default()
         .skip_timestamp()
-        .skip_artifact_hash();
+        .skip_artifact_hash()
+        .skip_certificate_chain()
+        .skip_tlog();
 
     let result = verifier.verify(artifact, &bundle, &policy);
     assert!(result.is_ok(), "Verification failed: {:?}", result.err());
@@ -143,7 +153,7 @@ fn test_verify_with_policy() {
         .skip_timestamp()
         .skip_artifact_hash();
 
-    let result = verify(artifact, &bundle, &policy);
+    let result = verify(artifact, &bundle, &policy, &production_root());
     assert!(result.is_ok(), "Verification failed: {:?}", result.err());
 
     let verification = result.unwrap();
@@ -160,7 +170,7 @@ fn test_verify_extracts_integrated_time() {
         .skip_timestamp()
         .skip_artifact_hash();
 
-    let result = verify(artifact, &bundle, &policy).unwrap();
+    let result = verify(artifact, &bundle, &policy, &production_root()).unwrap();
 
     assert!(result.integrated_time.is_some());
     let time = result.integrated_time.unwrap();
@@ -175,12 +185,14 @@ fn test_skip_tlog_verification() {
     let bundle = Bundle::from_json(V03_BUNDLE).unwrap();
     let artifact = b"test artifact";
 
+    // V03_BUNDLE is from sigstore-python tests and may not chain to production Fulcio
     let policy = VerificationPolicy::default()
         .skip_tlog()
         .skip_timestamp()
-        .skip_artifact_hash();
+        .skip_artifact_hash()
+        .skip_certificate_chain();
 
-    let result = verify(artifact, &bundle, &policy);
+    let result = verify(artifact, &bundle, &policy, &production_root());
     assert!(result.is_ok());
 }
 
@@ -257,7 +269,7 @@ fn test_full_verification_flow() {
         .skip_timestamp()
         .skip_artifact_hash();
 
-    let result = verify(artifact, &bundle, &policy).unwrap();
+    let result = verify(artifact, &bundle, &policy, &production_root()).unwrap();
     assert!(result.success);
     assert_eq!(result.integrated_time, Some(1738060096));
 }
@@ -299,7 +311,7 @@ fn test_full_verification_flow_happy_path() {
         .skip_timestamp()
         .skip_artifact_hash();
 
-    let result = verify(artifact, &bundle, &policy).unwrap();
+    let result = verify(artifact, &bundle, &policy, &production_root()).unwrap();
     assert!(result.success);
     assert_eq!(result.integrated_time, Some(1734374576));
 }
@@ -307,18 +319,24 @@ fn test_full_verification_flow_happy_path() {
 #[test]
 fn test_verification_with_different_bundle_versions() {
     // v0.3 bundle with message signature
+    // V03_BUNDLE is from sigstore-python tests (staging) - skip crypto verifications
     let v03_msg = Bundle::from_json(V03_BUNDLE).unwrap();
     let artifact = b"test";
     let policy = VerificationPolicy::default()
         .skip_timestamp()
-        .skip_artifact_hash();
+        .skip_artifact_hash()
+        .skip_certificate_chain()
+        .skip_tlog();
 
-    let result = verify(artifact, &v03_msg, &policy);
+    let result = verify(artifact, &v03_msg, &policy, &production_root());
     assert!(result.is_ok(), "v0.3 message signature verification failed");
 
-    // v0.3 bundle with DSSE
+    // v0.3 bundle with DSSE - this one chains to production
     let v03_dsse = Bundle::from_json(V03_BUNDLE_DSSE).unwrap();
-    let result = verify(artifact, &v03_dsse, &policy);
+    let dsse_policy = VerificationPolicy::default()
+        .skip_timestamp()
+        .skip_artifact_hash();
+    let result = verify(artifact, &v03_dsse, &dsse_policy, &production_root());
     assert!(result.is_ok(), "v0.3 DSSE verification failed");
 }
 
@@ -477,7 +495,7 @@ fn test_dsse_bundle_with_2_signatures_should_fail() {
         .skip_timestamp()
         .skip_artifact_hash();
 
-    let result = verify(artifact, &bundle, &policy);
+    let result = verify(artifact, &bundle, &policy, &production_root());
 
     // This should fail - multiple signatures are not supported
     // sigstore-go returns ErrDSSEInvalidSignatureCount for this case
@@ -585,7 +603,7 @@ fn test_bundle_no_cert_v1() {
         .skip_timestamp()
         .skip_artifact_hash();
 
-    let result = verify(artifact, &bundle, &policy);
+    let result = verify(artifact, &bundle, &policy, &production_root());
     assert!(
         result.is_err(),
         "Verification should fail without a certificate"
@@ -646,7 +664,7 @@ fn test_bundle_no_log_entry() {
         .skip_timestamp()
         .skip_artifact_hash();
 
-    let result = verify(artifact, &bundle, &policy);
+    let result = verify(artifact, &bundle, &policy, &production_root());
     assert!(
         result.is_err(),
         "Verification should fail without transparency log entries"
@@ -691,7 +709,7 @@ fn test_bundle_v3_no_signed_time() {
         .skip_timestamp()
         .skip_artifact_hash();
 
-    let result = verify(artifact, &bundle, &policy);
+    let result = verify(artifact, &bundle, &policy, &production_root());
     // Whether this succeeds or fails depends on implementation
     // We just verify it handles the case
     let _ = result;

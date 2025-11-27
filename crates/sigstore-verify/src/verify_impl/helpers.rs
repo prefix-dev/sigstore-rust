@@ -7,7 +7,6 @@ use crate::error::{Error, Result};
 use const_oid::db::rfc5912::{ECDSA_WITH_SHA_256, ECDSA_WITH_SHA_384, SECP_256_R_1, SECP_384_R_1};
 use sigstore_crypto::CertificateInfo;
 use sigstore_trust_root::TrustedRoot;
-use sigstore_tsa::parse_timestamp;
 use sigstore_types::bundle::VerificationMaterialContent;
 use sigstore_types::{Bundle, SignatureContent};
 use x509_cert::der::Encode;
@@ -75,7 +74,7 @@ pub fn extract_integrated_time(bundle: &Bundle) -> Result<Option<i64>> {
 pub fn extract_tsa_timestamp(
     bundle: &Bundle,
     signature_bytes: &[u8],
-    trusted_root: Option<&TrustedRoot>,
+    trusted_root: &TrustedRoot,
 ) -> Result<Option<i64>> {
     use sigstore_tsa::{verify_timestamp_response, VerifyOpts as TsaVerifyOpts};
 
@@ -100,73 +99,52 @@ pub fn extract_tsa_timestamp(
         // Get the timestamp bytes
         let ts_bytes = ts.signed_timestamp.as_bytes();
 
-        // If we have a trusted root, perform full verification
-        if let Some(root) = trusted_root {
-            // Build verification options from trusted root
-            let mut opts = TsaVerifyOpts::new();
+        // Build verification options from trusted root
+        let mut opts = TsaVerifyOpts::new();
 
-            // Get TSA root certificates
-            if let Ok(tsa_roots) = root.tsa_root_certs() {
-                opts = opts.with_roots(tsa_roots);
+        // Get TSA root certificates
+        if let Ok(tsa_roots) = trusted_root.tsa_root_certs() {
+            opts = opts.with_roots(tsa_roots);
+        }
+
+        // Get TSA intermediate certificates
+        if let Ok(tsa_intermediates) = trusted_root.tsa_intermediate_certs() {
+            opts = opts.with_intermediates(tsa_intermediates);
+        }
+
+        // Get TSA leaf certificate
+        if let Ok(tsa_leaves) = trusted_root.tsa_leaf_certs() {
+            if let Some(leaf) = tsa_leaves.first() {
+                opts = opts.with_tsa_certificate(leaf.clone());
             }
+        }
 
-            // Get TSA intermediate certificates
-            if let Ok(tsa_intermediates) = root.tsa_intermediate_certs() {
-                opts = opts.with_intermediates(tsa_intermediates);
+        // Get TSA validity period from trusted root
+        if let Ok(tsa_certs) = trusted_root.tsa_certs_with_validity() {
+            if let Some((_cert, Some(start), Some(end))) = tsa_certs.first() {
+                opts = opts.with_tsa_validity(*start, *end);
             }
+        }
 
-            // Get TSA leaf certificate
-            if let Ok(tsa_leaves) = root.tsa_leaf_certs() {
-                if let Some(leaf) = tsa_leaves.first() {
-                    opts = opts.with_tsa_certificate(leaf.clone());
-                }
-            }
+        // Verify the timestamp response with full cryptographic validation
+        let result = verify_timestamp_response(ts_bytes, signature_bytes, opts).map_err(|e| {
+            Error::Verification(format!("TSA timestamp verification failed: {}", e))
+        })?;
 
-            // Get TSA validity period from trusted root
-            if let Ok(tsa_certs) = root.tsa_certs_with_validity() {
-                if let Some((_cert, Some(start), Some(end))) = tsa_certs.first() {
-                    opts = opts.with_tsa_validity(*start, *end);
-                }
-            }
+        let timestamp = result.time.timestamp();
+        any_timestamp_verified = true;
 
-            // Verify the timestamp response with full cryptographic validation
-            let result =
-                verify_timestamp_response(ts_bytes, signature_bytes, opts).map_err(|e| {
-                    Error::Verification(format!("TSA timestamp verification failed: {}", e))
-                })?;
-
-            let timestamp = result.time.timestamp();
-            any_timestamp_verified = true;
-
-            if let Some(earliest) = earliest_timestamp {
-                if timestamp < earliest {
-                    earliest_timestamp = Some(timestamp);
-                }
-            } else {
+        if let Some(earliest) = earliest_timestamp {
+            if timestamp < earliest {
                 earliest_timestamp = Some(timestamp);
             }
         } else {
-            // No trusted root - fall back to just parsing (old behavior)
-            match parse_timestamp(ts_bytes) {
-                Ok(timestamp) => {
-                    if let Some(earliest) = earliest_timestamp {
-                        if timestamp < earliest {
-                            earliest_timestamp = Some(timestamp);
-                        }
-                    } else {
-                        earliest_timestamp = Some(timestamp);
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to parse TSA timestamp: {}", e);
-                }
-            }
+            earliest_timestamp = Some(timestamp);
         }
     }
 
     // If we have a trusted root and timestamps were present but none verified, that's an error
-    if trusted_root.is_some()
-        && !any_timestamp_verified
+    if !any_timestamp_verified
         && !bundle
             .verification_material
             .timestamp_verification_data
@@ -189,7 +167,7 @@ pub fn extract_tsa_timestamp(
 pub fn determine_validation_time(
     bundle: &Bundle,
     signature_bytes: &[u8],
-    trusted_root: Option<&TrustedRoot>,
+    trusted_root: &TrustedRoot,
 ) -> Result<i64> {
     if let Some(tsa_time) = extract_tsa_timestamp(bundle, signature_bytes, trusted_root)? {
         Ok(tsa_time)
@@ -226,18 +204,13 @@ pub fn validate_certificate_time(validation_time: i64, cert_info: &CertificateIn
 pub fn verify_certificate_chain(
     cert_der: &[u8],
     _validation_time: i64,
-    trusted_root: Option<&TrustedRoot>,
+    trusted_root: &TrustedRoot,
 ) -> Result<()> {
     use x509_cert::der::Decode;
     use x509_cert::Certificate;
 
-    // If no trusted root is provided, skip chain verification
-    let Some(root) = trusted_root else {
-        return Ok(());
-    };
-
     // Get Fulcio certificates from trusted root
-    let fulcio_certs = root
+    let fulcio_certs = trusted_root
         .fulcio_certs()
         .map_err(|e| Error::Verification(format!("failed to get Fulcio certs: {}", e)))?;
 
@@ -432,13 +405,8 @@ fn extract_tbs_der(cert_der: &[u8]) -> Result<Vec<u8>> {
 /// for proper RFC 6962 compliant verification.
 pub fn verify_sct(
     verification_material: &VerificationMaterialContent,
-    trusted_root: Option<&TrustedRoot>,
+    trusted_root: &TrustedRoot,
 ) -> Result<()> {
-    // If no trusted root is provided, skip SCT verification
-    let Some(root) = trusted_root else {
-        return Ok(());
-    };
-
     // Extract certificate for verification
     let cert_der = extract_certificate_der(verification_material)?;
 
@@ -446,7 +414,7 @@ pub fn verify_sct(
     let issuer_spki_der = get_issuer_spki(verification_material, &cert_der, trusted_root)?;
 
     // Delegate to the new sct module for verification
-    super::sct::verify_sct(&cert_der, &issuer_spki_der, root)
+    super::sct::verify_sct(&cert_der, &issuer_spki_der, trusted_root)
 }
 
 /// Get the issuer's SubjectPublicKeyInfo DER bytes
@@ -456,7 +424,7 @@ pub fn verify_sct(
 fn get_issuer_spki(
     verification_material: &VerificationMaterialContent,
     cert_der: &[u8],
-    trusted_root: Option<&TrustedRoot>,
+    trusted_root: &TrustedRoot,
 ) -> Result<Vec<u8>> {
     use x509_cert::der::{Decode, Encode};
     use x509_cert::Certificate;
@@ -479,26 +447,24 @@ fn get_issuer_spki(
     }
 
     // 2. Try to find in trusted root
-    if let Some(root) = trusted_root {
-        let cert = Certificate::from_der(cert_der)
-            .map_err(|e| Error::Verification(format!("failed to parse certificate: {}", e)))?;
-        let issuer_name = cert.tbs_certificate.issuer;
+    let cert = Certificate::from_der(cert_der)
+        .map_err(|e| Error::Verification(format!("failed to parse certificate: {}", e)))?;
+    let issuer_name = cert.tbs_certificate.issuer;
 
-        let fulcio_certs = root
-            .fulcio_certs()
-            .map_err(|e| Error::Verification(format!("failed to get Fulcio certs: {}", e)))?;
+    let fulcio_certs = trusted_root
+        .fulcio_certs()
+        .map_err(|e| Error::Verification(format!("failed to get Fulcio certs: {}", e)))?;
 
-        for ca_der in fulcio_certs {
-            if let Ok(ca_cert) = Certificate::from_der(&ca_der) {
-                if ca_cert.tbs_certificate.subject == issuer_name {
-                    return ca_cert
-                        .tbs_certificate
-                        .subject_public_key_info
-                        .to_der()
-                        .map_err(|e| {
-                            Error::Verification(format!("failed to encode issuer SPKI: {}", e))
-                        });
-                }
+    for ca_der in fulcio_certs {
+        if let Ok(ca_cert) = Certificate::from_der(&ca_der) {
+            if ca_cert.tbs_certificate.subject == issuer_name {
+                return ca_cert
+                    .tbs_certificate
+                    .subject_public_key_info
+                    .to_der()
+                    .map_err(|e| {
+                        Error::Verification(format!("failed to encode issuer SPKI: {}", e))
+                    });
             }
         }
     }

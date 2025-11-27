@@ -20,7 +20,7 @@ use webpki::{anchor_from_trusted_cert, EndEntityCert, KeyUsage, ALL_VERIFICATION
 
 // Define OIDs as constants using const_oid::db
 const ID_KP_TIME_STAMPING: ObjectIdentifier = const_oid::db::rfc5280::ID_KP_TIME_STAMPING;
-const ID_SIGNED_DATA_STR: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.2");
+const ID_SIGNED_DATA: ObjectIdentifier = const_oid::db::rfc5911::ID_SIGNED_DATA;
 const OID_MESSAGE_DIGEST: ObjectIdentifier = const_oid::db::rfc6268::ID_MESSAGE_DIGEST;
 const OID_SHA256: ObjectIdentifier = const_oid::db::rfc5912::ID_SHA_256;
 const OID_SHA384: ObjectIdentifier = const_oid::db::rfc5912::ID_SHA_384;
@@ -173,7 +173,7 @@ pub fn verify_timestamp_response(
     };
 
     // Verify content type is SignedData
-    if content_info.content_type != ID_SIGNED_DATA_STR {
+    if content_info.content_type != ID_SIGNED_DATA {
         return Err(Error::ParseError(
             "ContentInfo content type is not SignedData".to_string(),
         ));

@@ -6,7 +6,6 @@
 pub mod asn1;
 pub mod client;
 pub mod error;
-pub mod parse;
 pub mod verify;
 
 pub use asn1::{
@@ -14,5 +13,4 @@ pub use asn1::{
 };
 pub use client::{timestamp_sigstore, TimestampClient};
 pub use error::{Error, Result};
-pub use parse::parse_timestamp;
 pub use verify::{verify_timestamp_response, TimestampResult, VerifyOpts};
