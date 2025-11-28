@@ -71,11 +71,30 @@ let rekor = RekorClient::builder("https://rekor.sigstore.dev")
 
 ## Cache Locations
 
-`FileSystemCache::default_location()` uses platform-specific directories:
+`FileSystemCache` uses platform-specific directories with URL-namespaced subdirectories:
 
-- **Linux**: `~/.cache/sigstore-rust/`
-- **macOS**: `~/Library/Caches/dev.sigstore.sigstore-rust/`
-- **Windows**: `C:\Users\<User>\AppData\Local\sigstore\sigstore-rust\cache\`
+- **Linux**: `~/.cache/sigstore-rust/<url-encoded-instance>/`
+- **macOS**: `~/Library/Caches/dev.sigstore.sigstore-rust/<url-encoded-instance>/`
+- **Windows**: `C:\Users\<User>\AppData\Local\sigstore\sigstore-rust\cache\<url-encoded-instance>\`
+
+### Instance-Specific Caching
+
+To prevent cache collisions between different Sigstore instances (e.g., production vs staging), use instance-specific caches:
+
+```rust
+use sigstore_cache::FileSystemCache;
+
+// Production cache (uses https://sigstore.dev namespace)
+let prod_cache = FileSystemCache::production()?;
+
+// Staging cache (uses https://sigstage.dev namespace)
+let staging_cache = FileSystemCache::staging()?;
+
+// Custom instance
+let custom_cache = FileSystemCache::for_instance("https://my-sigstore.example.com")?;
+```
+
+Using `default_location()` without URL namespacing is still available but not recommended if you use multiple instances.
 
 ## Custom Adapters
 

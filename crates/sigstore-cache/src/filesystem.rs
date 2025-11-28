@@ -10,6 +10,35 @@ use tokio::fs;
 
 use crate::{default_cache_dir, CacheAdapter, CacheKey, Result};
 
+/// Convert a URL to a safe directory name
+///
+/// This URL-encodes the URL to create a safe filesystem path, similar to
+/// how sigstore-python handles TUF repository URLs.
+///
+/// # Example
+/// ```ignore
+/// url_to_dirname("https://sigstore.dev") // -> "https%3A%2F%2Fsigstore.dev"
+/// ```
+fn url_to_dirname(url: &str) -> String {
+    // URL-encode the URL to make it safe for use as a directory name
+    // We encode everything except alphanumerics and some safe chars
+    let mut result = String::with_capacity(url.len() * 3);
+    for c in url.chars() {
+        match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' => {
+                result.push(c);
+            }
+            _ => {
+                // Percent-encode other characters
+                for byte in c.to_string().as_bytes() {
+                    result.push_str(&format!("%{:02X}", byte));
+                }
+            }
+        }
+    }
+    result
+}
+
 /// Metadata stored alongside cached values
 #[derive(Debug, Serialize, Deserialize)]
 struct CacheMetadata {
@@ -63,6 +92,12 @@ pub struct FileSystemCache {
     cache_dir: PathBuf,
 }
 
+/// Sigstore production instance base URL
+pub const SIGSTORE_PRODUCTION_URL: &str = "https://sigstore.dev";
+
+/// Sigstore staging instance base URL
+pub const SIGSTORE_STAGING_URL: &str = "https://sigstage.dev";
+
 impl FileSystemCache {
     /// Create a new file system cache at the specified directory
     ///
@@ -76,8 +111,51 @@ impl FileSystemCache {
     /// Create a cache at the default platform-specific location
     ///
     /// See [`default_cache_dir`] for the exact locations.
+    ///
+    /// **Warning**: This cache is not namespaced by instance URL. If you use
+    /// multiple Sigstore instances (e.g., production and staging), use
+    /// [`FileSystemCache::for_instance`] instead to avoid cache collisions.
     pub fn default_location() -> Result<Self> {
         Self::new(default_cache_dir()?)
+    }
+
+    /// Create a cache namespaced to a specific Sigstore instance URL
+    ///
+    /// This creates a subdirectory based on the URL, preventing cache collisions
+    /// when using multiple Sigstore instances (e.g., production vs staging).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use sigstore_cache::FileSystemCache;
+    ///
+    /// # fn example() -> Result<(), sigstore_cache::Error> {
+    /// // Cache for production instance
+    /// let prod_cache = FileSystemCache::for_instance("https://sigstore.dev")?;
+    ///
+    /// // Cache for staging instance (separate directory)
+    /// let staging_cache = FileSystemCache::for_instance("https://sigstage.dev")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn for_instance(base_url: &str) -> Result<Self> {
+        let namespace = url_to_dirname(base_url);
+        let path = default_cache_dir()?.join(namespace);
+        Self::new(path)
+    }
+
+    /// Create a cache for the Sigstore production instance
+    ///
+    /// Equivalent to `FileSystemCache::for_instance("https://sigstore.dev")`.
+    pub fn production() -> Result<Self> {
+        Self::for_instance(SIGSTORE_PRODUCTION_URL)
+    }
+
+    /// Create a cache for the Sigstore staging instance
+    ///
+    /// Equivalent to `FileSystemCache::for_instance("https://sigstage.dev")`.
+    pub fn staging() -> Result<Self> {
+        Self::for_instance(SIGSTORE_STAGING_URL)
     }
 
     /// Get the path for a cache file
@@ -260,5 +338,52 @@ mod tests {
 
         // Clean up
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_url_to_dirname() {
+        // Basic URL encoding
+        assert_eq!(
+            url_to_dirname("https://sigstore.dev"),
+            "https%3A%2F%2Fsigstore.dev"
+        );
+        assert_eq!(
+            url_to_dirname("https://sigstage.dev"),
+            "https%3A%2F%2Fsigstage.dev"
+        );
+
+        // URLs with paths
+        assert_eq!(
+            url_to_dirname("https://example.com/path/to/resource"),
+            "https%3A%2F%2Fexample.com%2Fpath%2Fto%2Fresource"
+        );
+
+        // URLs with ports
+        assert_eq!(
+            url_to_dirname("https://localhost:8080"),
+            "https%3A%2F%2Flocalhost%3A8080"
+        );
+
+        // Safe characters should not be encoded
+        assert_eq!(url_to_dirname("abc-123_test.txt"), "abc-123_test.txt");
+    }
+
+    #[test]
+    fn test_production_and_staging_paths_differ() {
+        let prod = FileSystemCache::production().unwrap();
+        let staging = FileSystemCache::staging().unwrap();
+
+        // Production and staging should have different cache directories
+        assert_ne!(prod.cache_dir, staging.cache_dir);
+
+        // Both should contain URL-encoded paths
+        assert!(prod
+            .cache_dir
+            .to_string_lossy()
+            .contains("https%3A%2F%2Fsigstore.dev"));
+        assert!(staging
+            .cache_dir
+            .to_string_lossy()
+            .contains("https%3A%2F%2Fsigstage.dev"));
     }
 }

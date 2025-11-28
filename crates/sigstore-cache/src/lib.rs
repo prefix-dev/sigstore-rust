@@ -37,7 +37,7 @@ mod memory;
 mod noop;
 
 pub use error::{Error, Result};
-pub use filesystem::FileSystemCache;
+pub use filesystem::{FileSystemCache, SIGSTORE_PRODUCTION_URL, SIGSTORE_STAGING_URL};
 pub use memory::InMemoryCache;
 pub use noop::NoCache;
 
