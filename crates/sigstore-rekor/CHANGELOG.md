@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/wolfv/sigstore-rust/compare/sigstore-rekor-v0.2.0...sigstore-rekor-v0.3.0) - 2025-11-28
+
+### Other
+
+- add sigstore-cache
+- make all interfaces more type safe
+- remove more types
+- remove certifactePem
+- improve sign / verify flow, add conda specific test
+
 ## [0.2.0](https://github.com/wolfv/sigstore-rust/compare/sigstore-rekor-v0.1.1...sigstore-rekor-v0.2.0) - 2025-11-27
 
 ### Other

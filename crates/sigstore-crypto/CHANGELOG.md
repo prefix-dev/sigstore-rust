@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/wolfv/sigstore-rust/compare/sigstore-crypto-v0.2.0...sigstore-crypto-v0.3.0) - 2025-11-28
+
+### Other
+
+- make all interfaces more type safe
+- remove more types
+- encode more certificates properly
+- unify certificate encoding
+- improve sign / verify flow, add conda specific test
+- more cleanup of functions
+
 ## [0.2.0](https://github.com/wolfv/sigstore-rust/compare/sigstore-crypto-v0.1.1...sigstore-crypto-v0.2.0) - 2025-11-27
 
 ### Other

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/wolfv/sigstore-rust/compare/sigstore-trust-root-v0.2.0...sigstore-trust-root-v0.3.0) - 2025-11-28
+
+### Other
+
+- add staging trust root
+- make all interfaces more type safe
+- improve sign / verify flow, add conda specific test
+- more cleanup of functions
+
 ## [0.2.0](https://github.com/wolfv/sigstore-rust/compare/sigstore-trust-root-v0.1.1...sigstore-trust-root-v0.2.0) - 2025-11-27
 
 ### Other
