@@ -67,12 +67,12 @@ impl BundleV03 {
     ///
     /// This is the most common case for Sigstore signing with Fulcio certificates.
     pub fn with_certificate_and_signature(
-        cert_der: Vec<u8>,
+        certificate: DerCertificate,
         signature: Signature,
         artifact_digest: Sha256Hash,
     ) -> Self {
         Self::new(
-            VerificationMaterialV03::Certificate(DerCertificate::new(cert_der)),
+            VerificationMaterialV03::Certificate(certificate),
             SignatureContent::MessageSignature(MessageSignature {
                 message_digest: Some(sigstore_types::bundle::MessageDigest {
                     algorithm: sigstore_types::HashAlgorithm::Sha2256,
@@ -86,9 +86,9 @@ impl BundleV03 {
     /// Create a new v0.3 bundle with a certificate and DSSE envelope.
     ///
     /// Used for attestations (in-toto statements).
-    pub fn with_certificate_and_dsse(cert_der: Vec<u8>, envelope: DsseEnvelope) -> Self {
+    pub fn with_certificate_and_dsse(certificate: DerCertificate, envelope: DsseEnvelope) -> Self {
         Self::new(
-            VerificationMaterialV03::Certificate(DerCertificate::new(cert_der)),
+            VerificationMaterialV03::Certificate(certificate),
             SignatureContent::DsseEnvelope(envelope),
         )
     }

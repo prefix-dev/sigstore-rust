@@ -3,14 +3,13 @@
 //! This module provides the main entry point for signing artifacts with Sigstore.
 
 use crate::error::{Error, Result};
-use base64::Engine as _;
 use sigstore_bundle::{BundleV03, TlogEntryBuilder};
 use sigstore_crypto::{CertificatePem, KeyPair, Signature, SigningScheme};
 use sigstore_fulcio::FulcioClient;
 use sigstore_oidc::{parse_identity_token, IdentityToken};
 use sigstore_rekor::{HashedRekord, RekorClient};
 use sigstore_tsa::TimestampClient;
-use sigstore_types::Bundle;
+use sigstore_types::{Bundle, DerCertificate};
 
 /// Configuration for signing operations
 #[derive(Debug, Clone)]
@@ -185,8 +184,8 @@ impl Signer {
 
     /// Request a signing certificate from Fulcio
     ///
-    /// Returns the leaf certificate as (DER bytes, PEM string).
-    async fn request_certificate(&self, key_pair: &KeyPair) -> Result<(Vec<u8>, String)> {
+    /// Returns the leaf certificate as (DerCertificate, PEM string).
+    async fn request_certificate(&self, key_pair: &KeyPair) -> Result<(DerCertificate, String)> {
         // Parse identity token to extract email or subject
         let token_info = parse_identity_token(self.identity_token.raw())?;
         let subject = token_info.email().unwrap_or(token_info.subject());
@@ -216,7 +215,9 @@ impl Signer {
             .ok_or_else(|| Error::Signing("No leaf certificate in response".to_string()))?
             .to_string();
 
-        let leaf_cert_der = pem_to_der(&leaf_cert_pem)?;
+        // Parse PEM to type-safe DerCertificate (validates CERTIFICATE header)
+        let leaf_cert_der = DerCertificate::from_pem(&leaf_cert_pem)
+            .map_err(|e| Error::Signing(format!("Invalid certificate PEM: {}", e)))?;
 
         Ok((leaf_cert_der, leaf_cert_pem))
     }
@@ -265,30 +266,6 @@ impl Signer {
 /// Convenience function to create a signing context
 pub fn sign_context() -> SigningContext {
     SigningContext::production()
-}
-
-/// Convert PEM certificate to DER bytes
-fn pem_to_der(pem: &str) -> Result<Vec<u8>> {
-    let start_marker = "-----BEGIN CERTIFICATE-----";
-    let end_marker = "-----END CERTIFICATE-----";
-
-    let start = pem
-        .find(start_marker)
-        .ok_or_else(|| Error::Signing("Invalid PEM: missing start marker".to_string()))?;
-    let end = pem
-        .find(end_marker)
-        .ok_or_else(|| Error::Signing("Invalid PEM: missing end marker".to_string()))?;
-
-    if start > end {
-        return Err(Error::Signing("Invalid PEM: start after end".to_string()));
-    }
-
-    let content = &pem[start + start_marker.len()..end];
-    let clean_content: String = content.chars().filter(|c| !c.is_whitespace()).collect();
-
-    base64::engine::general_purpose::STANDARD
-        .decode(&clean_content)
-        .map_err(|e| Error::Signing(format!("Invalid certificate base64: {}", e)))
 }
 
 #[cfg(test)]

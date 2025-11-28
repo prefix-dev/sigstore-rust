@@ -1755,6 +1755,7 @@ dependencies = [
  "base64",
  "chrono",
  "hex",
+ "pem",
  "serde",
  "serde_json",
  "thiserror",

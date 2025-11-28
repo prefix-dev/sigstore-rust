@@ -11,7 +11,7 @@ use sigstore_fulcio::FulcioClient;
 use sigstore_oidc::parse_identity_token;
 use sigstore_rekor::RekorClient;
 use sigstore_trust_root::TrustedRoot;
-use sigstore_types::{Bundle, SignatureContent};
+use sigstore_types::{Bundle, DerCertificate, SignatureContent};
 use sigstore_verify::{verify, VerificationPolicy};
 
 use std::env;
@@ -192,7 +192,10 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
     let leaf_cert_pem = cert_response
         .leaf_certificate()
         .ok_or("No leaf certificate in response")?;
-    let leaf_cert_der = pem_to_der(leaf_cert_pem)?;
+
+    // Parse PEM to type-safe DerCertificate (validates CERTIFICATE header)
+    let leaf_cert_der = DerCertificate::from_pem(leaf_cert_pem)
+        .map_err(|e| format!("Invalid certificate PEM: {}", e))?;
 
     // Sign the artifact
     let signature = key_pair.sign(&artifact_data)?;
@@ -427,26 +430,4 @@ fn verify_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
         Ok(())
     }
-}
-
-fn pem_to_der(pem: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    use base64::Engine;
-    let start_marker = "-----BEGIN CERTIFICATE-----";
-    let end_marker = "-----END CERTIFICATE-----";
-
-    let start = pem
-        .find(start_marker)
-        .ok_or("Invalid PEM: missing start marker")?;
-    let end = pem
-        .find(end_marker)
-        .ok_or("Invalid PEM: missing end marker")?;
-
-    if start > end {
-        return Err("Invalid PEM: start after end".into());
-    }
-
-    let content = &pem[start + start_marker.len()..end];
-    let clean_content: String = content.chars().filter(|c| !c.is_whitespace()).collect();
-
-    Ok(base64::engine::general_purpose::STANDARD.decode(&clean_content)?)
 }

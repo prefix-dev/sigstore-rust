@@ -199,16 +199,92 @@ base64_newtype!(
     ///
     /// This type represents a certificate in DER format (binary ASN.1).
     /// Serializes as base64 in JSON.
+    ///
+    /// # Example
+    /// ```
+    /// use sigstore_types::DerCertificate;
+    ///
+    /// // Parse from PEM (validates CERTIFICATE header)
+    /// let pem = "-----BEGIN CERTIFICATE-----\nYWJjZA==\n-----END CERTIFICATE-----";
+    /// let cert = DerCertificate::from_pem(pem).unwrap();
+    ///
+    /// // Convert back to PEM
+    /// let pem_out = cert.to_pem();
+    /// ```
     DerCertificate
 );
+
+impl DerCertificate {
+    /// Parse from PEM-encoded certificate string.
+    ///
+    /// Validates that the PEM block has a `CERTIFICATE` header.
+    /// Returns an error if the PEM is invalid or has the wrong type.
+    pub fn from_pem(pem_str: &str) -> Result<Self> {
+        let parsed = pem::parse(pem_str)
+            .map_err(|e| Error::InvalidEncoding(format!("failed to parse PEM: {}", e)))?;
+
+        if parsed.tag() != "CERTIFICATE" {
+            return Err(Error::InvalidEncoding(format!(
+                "expected CERTIFICATE PEM block, got {}",
+                parsed.tag()
+            )));
+        }
+
+        Ok(Self::new(parsed.contents().to_vec()))
+    }
+
+    /// Encode as PEM string with CERTIFICATE header.
+    pub fn to_pem(&self) -> String {
+        let pem_block = pem::Pem::new("CERTIFICATE", self.as_bytes());
+        pem::encode(&pem_block)
+    }
+}
 
 base64_newtype!(
     /// DER-encoded public key bytes (SubjectPublicKeyInfo format)
     ///
     /// This type represents a public key in DER format.
     /// Serializes as base64 in JSON.
+    ///
+    /// # Example
+    /// ```
+    /// use sigstore_types::DerPublicKey;
+    ///
+    /// // Parse from PEM (validates PUBLIC KEY header)
+    /// let pem = "-----BEGIN PUBLIC KEY-----\nYWJjZA==\n-----END PUBLIC KEY-----";
+    /// let key = DerPublicKey::from_pem(pem).unwrap();
+    ///
+    /// // Convert back to PEM
+    /// let pem_out = key.to_pem();
+    /// ```
     DerPublicKey
 );
+
+impl DerPublicKey {
+    /// Parse from PEM-encoded public key string.
+    ///
+    /// Validates that the PEM block has a `PUBLIC KEY` header.
+    /// Returns an error if the PEM is invalid or has the wrong type.
+    pub fn from_pem(pem_str: &str) -> Result<Self> {
+        let parsed = pem::parse(pem_str)
+            .map_err(|e| Error::InvalidEncoding(format!("failed to parse PEM: {}", e)))?;
+
+        if parsed.tag() != "PUBLIC KEY" {
+            return Err(Error::InvalidEncoding(format!(
+                "expected PUBLIC KEY PEM block, got {}",
+                parsed.tag()
+            )));
+        }
+
+        Ok(Self::new(parsed.contents().to_vec()))
+    }
+
+    /// Encode as PEM string with PUBLIC KEY header.
+    pub fn to_pem(&self) -> String {
+        let pem_block = pem::Pem::new("PUBLIC KEY", self.as_bytes());
+        pem::encode(&pem_block)
+    }
+}
 
 base64_newtype!(
     /// Cryptographic signature bytes
@@ -713,5 +789,65 @@ mod tests {
         let bytes = vec![1, 2, 3, 4];
         let key_id = LogKeyId::from_bytes(&bytes);
         assert_eq!(key_id.decode().unwrap(), bytes);
+    }
+
+    #[test]
+    fn test_certificate_from_pem() {
+        let pem = "-----BEGIN CERTIFICATE-----\nYWJjZA==\n-----END CERTIFICATE-----";
+        let cert = DerCertificate::from_pem(pem).unwrap();
+        assert_eq!(cert.as_bytes(), b"abcd");
+    }
+
+    #[test]
+    fn test_certificate_from_pem_wrong_type() {
+        let pem = "-----BEGIN PRIVATE KEY-----\nYWJjZA==\n-----END PRIVATE KEY-----";
+        let result = DerCertificate::from_pem(pem);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("expected CERTIFICATE"));
+    }
+
+    #[test]
+    fn test_certificate_to_pem() {
+        let cert = DerCertificate::from_bytes(b"abcd");
+        let pem = cert.to_pem();
+        assert!(pem.contains("-----BEGIN CERTIFICATE-----"));
+        assert!(pem.contains("-----END CERTIFICATE-----"));
+
+        // Round-trip
+        let cert2 = DerCertificate::from_pem(&pem).unwrap();
+        assert_eq!(cert, cert2);
+    }
+
+    #[test]
+    fn test_public_key_from_pem() {
+        let pem = "-----BEGIN PUBLIC KEY-----\nYWJjZA==\n-----END PUBLIC KEY-----";
+        let key = DerPublicKey::from_pem(pem).unwrap();
+        assert_eq!(key.as_bytes(), b"abcd");
+    }
+
+    #[test]
+    fn test_public_key_from_pem_wrong_type() {
+        let pem = "-----BEGIN PRIVATE KEY-----\nYWJjZA==\n-----END PRIVATE KEY-----";
+        let result = DerPublicKey::from_pem(pem);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("expected PUBLIC KEY"));
+    }
+
+    #[test]
+    fn test_public_key_to_pem() {
+        let key = DerPublicKey::from_bytes(b"abcd");
+        let pem = key.to_pem();
+        assert!(pem.contains("-----BEGIN PUBLIC KEY-----"));
+        assert!(pem.contains("-----END PUBLIC KEY-----"));
+
+        // Round-trip
+        let key2 = DerPublicKey::from_pem(&pem).unwrap();
+        assert_eq!(key, key2);
     }
 }
