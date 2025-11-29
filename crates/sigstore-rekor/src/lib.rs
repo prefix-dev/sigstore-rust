@@ -40,5 +40,8 @@ pub mod error;
 
 pub use body::RekorEntryBody;
 pub use client::{get_public_log_info, RekorClient, RekorClientBuilder};
-pub use entry::{DsseEntry, HashedRekord, HashedRekordV2, LogEntry, LogInfo, SearchIndex};
+pub use entry::{
+    DsseEntry, DsseEntryV2, HashedRekord, HashedRekordV2, LogEntry, LogInfo, RekorApiVersion,
+    SearchIndex,
+};
 pub use error::{Error, Result};

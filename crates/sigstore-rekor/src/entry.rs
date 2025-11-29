@@ -7,6 +7,17 @@ use sigstore_types::{
 };
 use std::collections::HashMap;
 
+/// Rekor API version
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RekorApiVersion {
+    /// V1 API - legacy, uses hashedrekord 0.0.1 and dsse 0.0.1
+    V1,
+    /// V2 API - current, uses hashedrekord 0.0.2 and dsse 0.0.2
+    /// Returns inclusion proofs with checkpoints
+    #[default]
+    V2,
+}
+
 /// A log entry from Rekor
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -352,6 +363,58 @@ impl HashedRekordV2 {
                         public_key: None,
                     },
                 },
+            },
+        }
+    }
+}
+
+/// DSSE entry for creating new log entries (V2)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DsseEntryV2 {
+    #[serde(rename = "dsseRequestV002")]
+    pub request: DsseRequestV002,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DsseRequestV002 {
+    /// The DSSE envelope
+    pub envelope: sigstore_types::DsseEnvelope,
+    /// Verifiers (certificates) for the signatures
+    pub verifiers: Vec<DsseVerifierV2>,
+}
+
+/// Verifier in DSSE V2 (same structure as HashedRekord V2)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DsseVerifierV2 {
+    /// Key details (enum value as string)
+    pub key_details: String,
+    /// X.509 certificate
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub x509_certificate: Option<HashedRekordPublicKeyV2>,
+    /// Public key (alternative to certificate)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<HashedRekordPublicKeyV2>,
+}
+
+impl DsseEntryV2 {
+    /// Create a new DsseEntryV2 from an envelope and certificate
+    ///
+    /// # Arguments
+    /// * `envelope` - The DSSE envelope containing signatures
+    /// * `certificate` - DER-encoded X.509 certificate from Fulcio
+    pub fn new(envelope: &sigstore_types::DsseEnvelope, certificate: &DerCertificate) -> Self {
+        Self {
+            request: DsseRequestV002 {
+                envelope: envelope.clone(),
+                verifiers: vec![DsseVerifierV2 {
+                    // Assuming ECDSA P-256 SHA-256 for now as per conformance tests
+                    key_details: "PKIX_ECDSA_P256_SHA_256".to_string(),
+                    x509_certificate: Some(HashedRekordPublicKeyV2 {
+                        content: certificate.clone(),
+                    }),
+                    public_key: None,
+                }],
             },
         }
     }

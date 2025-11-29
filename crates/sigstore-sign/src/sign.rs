@@ -7,7 +7,9 @@ use sigstore_bundle::{BundleV03, TlogEntryBuilder};
 use sigstore_crypto::{KeyPair, SigningScheme};
 use sigstore_fulcio::FulcioClient;
 use sigstore_oidc::IdentityToken;
-use sigstore_rekor::{DsseEntry, HashedRekord, RekorClient};
+use sigstore_rekor::{
+    DsseEntry, DsseEntryV2, HashedRekord, HashedRekordV2, RekorApiVersion, RekorClient,
+};
 use sigstore_tsa::TimestampClient;
 use sigstore_types::{
     Artifact, Bundle, DerCertificate, DsseEnvelope, DsseSignature, KeyId, PayloadBytes, Sha256Hash,
@@ -25,6 +27,8 @@ pub struct SigningConfig {
     pub tsa_url: Option<String>,
     /// Signing scheme to use
     pub signing_scheme: SigningScheme,
+    /// Rekor API version to use (defaults to V2)
+    pub rekor_api_version: RekorApiVersion,
 }
 
 impl Default for SigningConfig {
@@ -34,6 +38,7 @@ impl Default for SigningConfig {
             rekor_url: "https://rekor.sigstore.dev".to_string(),
             tsa_url: Some("https://timestamp.sigstore.dev/api/v1/timestamp".to_string()),
             signing_scheme: SigningScheme::EcdsaP256Sha256,
+            rekor_api_version: RekorApiVersion::default(), // V2
         }
     }
 }
@@ -51,6 +56,7 @@ impl SigningConfig {
             rekor_url: "https://rekor.sigstage.dev".to_string(),
             tsa_url: Some("https://timestamp.sigstage.dev/api/v1/timestamp".to_string()),
             signing_scheme: SigningScheme::EcdsaP256Sha256,
+            rekor_api_version: RekorApiVersion::default(), // V2
         }
     }
 }
@@ -95,6 +101,7 @@ impl SigningContext {
             fulcio_url: self.config.fulcio_url.clone(),
             rekor_url: self.config.rekor_url.clone(),
             tsa_url: self.config.tsa_url.clone(),
+            rekor_api_version: self.config.rekor_api_version,
         }
     }
 }
@@ -112,6 +119,7 @@ pub struct Signer {
     fulcio_url: String,
     rekor_url: String,
     tsa_url: Option<String>,
+    rekor_api_version: RekorApiVersion,
 }
 
 impl Signer {
@@ -230,18 +238,31 @@ impl Signer {
         // Compute artifact hash
         let artifact_hash = sigstore_crypto::sha256(artifact);
 
-        // Create hashedrekord entry with the certificate
-        let hashed_rekord = HashedRekord::new(&artifact_hash, signature, certificate);
-
-        // Create Rekor client and upload
+        // Create Rekor client
         let rekor = RekorClient::new(&self.rekor_url);
-        let log_entry = rekor
-            .create_entry(hashed_rekord)
-            .await
-            .map_err(|e| Error::Signing(format!("Failed to create Rekor entry: {}", e)))?;
+
+        // Use V1 or V2 API based on configuration
+        let (log_entry, version) = match self.rekor_api_version {
+            RekorApiVersion::V1 => {
+                let hashed_rekord = HashedRekord::new(&artifact_hash, signature, certificate);
+                let entry = rekor
+                    .create_entry(hashed_rekord)
+                    .await
+                    .map_err(|e| Error::Signing(format!("Failed to create Rekor entry: {}", e)))?;
+                (entry, "0.0.1")
+            }
+            RekorApiVersion::V2 => {
+                let hashed_rekord = HashedRekordV2::new(&artifact_hash, signature, certificate);
+                let entry = rekor
+                    .create_entry_v2(hashed_rekord)
+                    .await
+                    .map_err(|e| Error::Signing(format!("Failed to create Rekor entry: {}", e)))?;
+                (entry, "0.0.2")
+            }
+        };
 
         // Build TlogEntry from the log entry response
-        let tlog_builder = TlogEntryBuilder::from_log_entry(&log_entry, "hashedrekord", "0.0.1");
+        let tlog_builder = TlogEntryBuilder::from_log_entry(&log_entry, "hashedrekord", version);
 
         Ok(tlog_builder)
     }
@@ -346,18 +367,35 @@ impl Signer {
         envelope: &DsseEnvelope,
         certificate: &DerCertificate,
     ) -> Result<TlogEntryBuilder> {
-        // Create DSSE entry
-        let dsse_entry = DsseEntry::new(envelope, certificate);
-
-        // Create Rekor client and upload
+        // Create Rekor client
         let rekor = RekorClient::new(&self.rekor_url);
-        let log_entry = rekor
-            .create_dsse_entry(dsse_entry)
-            .await
-            .map_err(|e| Error::Signing(format!("Failed to create DSSE Rekor entry: {}", e)))?;
+
+        // Use V1 or V2 API based on configuration
+        let (log_entry, version) = match self.rekor_api_version {
+            RekorApiVersion::V1 => {
+                let dsse_entry = DsseEntry::new(envelope, certificate);
+                let entry = rekor
+                    .create_dsse_entry(dsse_entry)
+                    .await
+                    .map_err(|e| {
+                        Error::Signing(format!("Failed to create DSSE Rekor entry: {}", e))
+                    })?;
+                (entry, "0.0.1")
+            }
+            RekorApiVersion::V2 => {
+                let dsse_entry = DsseEntryV2::new(envelope, certificate);
+                let entry = rekor
+                    .create_dsse_entry_v2(dsse_entry)
+                    .await
+                    .map_err(|e| {
+                        Error::Signing(format!("Failed to create DSSE Rekor entry: {}", e))
+                    })?;
+                (entry, "0.0.2")
+            }
+        };
 
         // Build TlogEntry from the log entry response
-        let tlog_builder = TlogEntryBuilder::from_log_entry(&log_entry, "dsse", "0.0.1");
+        let tlog_builder = TlogEntryBuilder::from_log_entry(&log_entry, "dsse", version);
 
         Ok(tlog_builder)
     }

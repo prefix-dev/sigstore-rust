@@ -1,6 +1,7 @@
 //! Example: Sign a blob with Sigstore
 //!
 //! This example demonstrates how to sign an artifact using Sigstore's keyless signing.
+//! By default, it uses the Rekor V2 API which provides inclusion proofs with checkpoints.
 //!
 //! # Usage
 //!
@@ -14,6 +15,11 @@
 //! cargo run -p sigstore-sign --example sign_blob -- \
 //!     --token "$OIDC_TOKEN" \
 //!     artifact.txt -o artifact.sigstore.json
+//! ```
+//!
+//! Use Rekor V1 API (legacy):
+//! ```sh
+//! cargo run -p sigstore-sign --example sign_blob -- --v1 artifact.txt
 //! ```
 //!
 //! # In GitHub Actions
@@ -32,7 +38,8 @@
 //! ```
 
 use sigstore_oidc::{get_ambient_token, get_identity_token, is_ci_environment, IdentityToken};
-use sigstore_sign::SigningContext;
+use sigstore_rekor::RekorApiVersion;
+use sigstore_sign::{SigningConfig, SigningContext};
 
 use std::env;
 use std::fs;
@@ -46,6 +53,7 @@ async fn main() {
     let mut token: Option<String> = None;
     let mut output: Option<String> = None;
     let mut staging = false;
+    let mut use_v1 = false;
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 1;
@@ -69,6 +77,9 @@ async fn main() {
             }
             "--staging" => {
                 staging = true;
+            }
+            "--v1" => {
+                use_v1 = true;
             }
             "--help" | "-h" => {
                 print_usage(&args[0]);
@@ -123,14 +134,29 @@ async fn main() {
     }
     println!("  Issuer: {}", identity_token.issuer());
 
-    // Create signing context
-    let context = if staging {
-        println!("  Using: staging infrastructure");
-        SigningContext::staging()
+    // Create signing context with appropriate API version
+    let rekor_version = if use_v1 {
+        RekorApiVersion::V1
     } else {
-        println!("  Using: production infrastructure");
-        SigningContext::production()
+        RekorApiVersion::V2
     };
+
+    let context = if staging {
+        let mut config = SigningConfig::staging();
+        config.rekor_api_version = rekor_version;
+        println!("  Using: staging infrastructure");
+        SigningContext::with_config(config)
+    } else {
+        let mut config = SigningConfig::production();
+        config.rekor_api_version = rekor_version;
+        println!("  Using: production infrastructure");
+        SigningContext::with_config(config)
+    };
+
+    println!(
+        "  Rekor API: {}",
+        if use_v1 { "V1 (legacy)" } else { "V2" }
+    );
 
     // Create signer and sign
     let signer = context.signer(identity_token);
@@ -164,12 +190,22 @@ async fn main() {
 
     // Print tlog entry info
     if let Some(entry) = bundle.verification_material.tlog_entries.first() {
+        println!(
+            "  Entry Kind: {} v{}",
+            entry.kind_version.kind, entry.kind_version.version
+        );
         println!("  Log Index: {}", entry.log_index);
         if let Ok(ts) = entry.integrated_time.parse::<i64>() {
             use chrono::{DateTime, Utc};
             if let Some(dt) = DateTime::<Utc>::from_timestamp(ts, 0) {
                 println!("  Integrated Time: {}", dt);
             }
+        }
+        // Show if we have inclusion proof (V2) vs just promise (V1)
+        if entry.inclusion_proof.is_some() {
+            println!("  Inclusion Proof: yes (with checkpoint)");
+        } else if entry.inclusion_promise.is_some() {
+            println!("  Inclusion Promise: yes (SET)");
         }
     }
 
@@ -224,7 +260,10 @@ fn print_usage(program: &str) {
     eprintln!("  -o, --output <FILE>  Output bundle path (default: <artifact>.sigstore.json)");
     eprintln!("  -t, --token <TOKEN>  OIDC identity token (skips interactive auth)");
     eprintln!("      --staging        Use Sigstore staging infrastructure");
+    eprintln!("      --v1             Use Rekor V1 API (legacy, uses SET instead of inclusion proof)");
     eprintln!("  -h, --help           Print this help message");
+    eprintln!();
+    eprintln!("By default, Rekor V2 API is used which provides inclusion proofs with checkpoints.");
     eprintln!();
     eprintln!("Examples:");
     eprintln!("  # Sign interactively (opens browser for OAuth)");
@@ -235,6 +274,9 @@ fn print_usage(program: &str) {
     eprintln!();
     eprintln!("  # Sign with a pre-obtained token");
     eprintln!("  {} --token \"$OIDC_TOKEN\" artifact.txt", program);
+    eprintln!();
+    eprintln!("  # Sign using legacy V1 API");
+    eprintln!("  {} --v1 artifact.txt", program);
     eprintln!();
     eprintln!("In GitHub Actions:");
     eprintln!("  # Add 'id-token: write' permission, then run without --token");
