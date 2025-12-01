@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/wolfv/sigstore-rust/compare/sigstore-verify-v0.4.0...sigstore-verify-v0.5.0) - 2025-12-01
+
+### Added
+
+- Add SigningConfig support and V2 bundle fixes ([#6](https://github.com/wolfv/sigstore-rust/pull/6))
+
 ## [0.4.0](https://github.com/wolfv/sigstore-rust/compare/sigstore-verify-v0.3.0...sigstore-verify-v0.4.0) - 2025-11-28
 
 ### Other
