@@ -1609,6 +1609,7 @@ dependencies = [
  "sigstore-fulcio",
  "sigstore-oidc",
  "sigstore-rekor",
+ "sigstore-trust-root",
  "sigstore-tsa",
  "sigstore-types",
  "thiserror",

@@ -10,7 +10,7 @@ use sigstore_crypto::KeyPair;
 use sigstore_fulcio::FulcioClient;
 use sigstore_oidc::IdentityToken;
 use sigstore_rekor::RekorClient;
-use sigstore_trust_root::TrustedRoot;
+use sigstore_trust_root::{SigningConfig, TrustedRoot};
 use sigstore_tsa::TimestampClient;
 use sigstore_types::{Bundle, Sha256Hash, SignatureContent};
 use sigstore_verify::{verify, VerificationPolicy};
@@ -114,61 +114,28 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
     let bundle_path = bundle_path.ok_or("Missing required --bundle")?;
     let artifact_path = artifact_path.ok_or("Missing artifact path")?;
 
-    // Parse signing config if present to get URLs
-    let (fulcio_url, rekor_url, use_rekor_v2, tsa_url) = if let Some(config_path) = &_signing_config
-    {
-        let config_content = fs::read_to_string(config_path)?;
-        let config_json: serde_json::Value = serde_json::from_str(&config_content)?;
-
-        let fulcio_url = config_json
-            .get("caUrls")
-            .and_then(|v| v.as_array())
-            .and_then(|a| a.first())
-            .and_then(|s| s.get("url"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .ok_or("No caUrls in signing config")?;
-
-        let tlogs = config_json
-            .get("tlogs")
-            .or_else(|| config_json.get("rekorTlogUrls"))
-            .and_then(|v| v.as_array())
-            .ok_or("No tlogs in signing config")?;
-
-        let log = tlogs.first().ok_or("Empty tlogs list")?;
-        let url = log
-            .get("baseUrl")
-            .or_else(|| log.get("url"))
-            .and_then(|v| v.as_str())
-            .ok_or("No baseUrl or url in tlog")?;
-        let version = log
-            .get("majorApiVersion")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1);
-
-        let tsa_url = config_json
-            .get("tsaUrls")
-            .and_then(|v| v.as_array())
-            .and_then(|a| a.first())
-            .and_then(|t| t.get("url"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        (fulcio_url, url.to_string(), version == 2, tsa_url)
+    // Parse signing config to get URLs
+    let signing_config = if let Some(config_path) = &_signing_config {
+        SigningConfig::from_file(config_path)?
+    } else if staging {
+        SigningConfig::staging()?
     } else {
-        let fulcio_url = if staging {
-            "https://fulcio.sigstage.dev".to_string()
-        } else {
-            "https://fulcio.sigstore.dev".to_string()
-        };
-
-        let url = if staging {
-            "https://rekor.sigstage.dev".to_string()
-        } else {
-            "https://rekor.sigstore.dev".to_string()
-        };
-        (fulcio_url, url, false, None)
+        SigningConfig::production()?
     };
+
+    // Get the best endpoints from signing config
+    let fulcio_endpoint = signing_config
+        .get_fulcio_url()
+        .ok_or("No valid Fulcio CA found in signing config")?;
+    let fulcio_url = fulcio_endpoint.url.clone();
+
+    let rekor_endpoint = signing_config
+        .get_rekor_url(None) // Get highest available version
+        .ok_or("No valid Rekor tlog found in signing config")?;
+    let rekor_url = rekor_endpoint.url.clone();
+    let use_rekor_v2 = rekor_endpoint.major_api_version == 2;
+
+    let tsa_url = signing_config.get_tsa_url().map(|e| e.url.clone());
 
     // Read artifact
     let artifact_data = fs::read(&artifact_path)?;

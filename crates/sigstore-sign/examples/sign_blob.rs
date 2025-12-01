@@ -1,7 +1,6 @@
 //! Example: Sign a blob with Sigstore
 //!
 //! This example demonstrates how to sign an artifact using Sigstore's keyless signing.
-//! By default, it uses the Rekor V2 API which provides inclusion proofs with checkpoints.
 //!
 //! # Usage
 //!
@@ -17,9 +16,9 @@
 //!     artifact.txt -o artifact.sigstore.json
 //! ```
 //!
-//! Use Rekor V1 API (legacy):
+//! Use Rekor V2 API (when available):
 //! ```sh
-//! cargo run -p sigstore-sign --example sign_blob -- --v1 artifact.txt
+//! cargo run -p sigstore-sign --example sign_blob -- --v2 artifact.txt
 //! ```
 //!
 //! # In GitHub Actions
@@ -53,7 +52,7 @@ async fn main() {
     let mut token: Option<String> = None;
     let mut output: Option<String> = None;
     let mut staging = false;
-    let mut use_v1 = false;
+    let mut use_v2 = false;
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 1;
@@ -78,8 +77,8 @@ async fn main() {
             "--staging" => {
                 staging = true;
             }
-            "--v1" => {
-                use_v1 = true;
+            "--v2" => {
+                use_v2 = true;
             }
             "--help" | "-h" => {
                 print_usage(&args[0]);
@@ -135,28 +134,29 @@ async fn main() {
     println!("  Issuer: {}", identity_token.issuer());
 
     // Create signing context with appropriate API version
-    let rekor_version = if use_v1 {
-        RekorApiVersion::V1
-    } else {
-        RekorApiVersion::V2
-    };
-
-    let context = if staging {
-        let mut config = SigningConfig::staging();
-        config.rekor_api_version = rekor_version;
+    let base_config = if staging {
         println!("  Using: staging infrastructure");
-        SigningContext::with_config(config)
+        SigningConfig::staging()
     } else {
-        let mut config = SigningConfig::production();
-        config.rekor_api_version = rekor_version;
         println!("  Using: production infrastructure");
-        SigningContext::with_config(config)
+        SigningConfig::production()
     };
 
-    println!(
-        "  Rekor API: {}",
-        if use_v1 { "V1 (legacy)" } else { "V2" }
-    );
+    let config = if use_v2 {
+        base_config.with_rekor_version(RekorApiVersion::V2)
+    } else {
+        base_config
+    };
+
+    println!("  Rekor API: {:?}", config.rekor_api_version);
+    println!("  Rekor URL: {}", config.rekor_url);
+    if let Some(ref tsa_url) = config.tsa_url {
+        println!("  TSA URL: {}", tsa_url);
+    } else {
+        println!("  TSA URL: (none)");
+    }
+
+    let context = SigningContext::with_config(config);
 
     // Create signer and sign
     let signer = context.signer(identity_token);
@@ -195,10 +195,15 @@ async fn main() {
             entry.kind_version.kind, entry.kind_version.version
         );
         println!("  Log Index: {}", entry.log_index);
+        // For V2, integrated_time is always 0 - RFC3161 timestamps are used instead
         if let Ok(ts) = entry.integrated_time.parse::<i64>() {
-            use chrono::{DateTime, Utc};
-            if let Some(dt) = DateTime::<Utc>::from_timestamp(ts, 0) {
-                println!("  Integrated Time: {}", dt);
+            if ts == 0 && entry.kind_version.version == "0.0.2" {
+                println!("  Integrated Time: (V2 uses RFC3161 timestamps)");
+            } else {
+                use chrono::{DateTime, Utc};
+                if let Some(dt) = DateTime::<Utc>::from_timestamp(ts, 0) {
+                    println!("  Integrated Time: {}", dt);
+                }
             }
         }
         // Show if we have inclusion proof (V2) vs just promise (V1)
@@ -207,6 +212,18 @@ async fn main() {
         } else if entry.inclusion_promise.is_some() {
             println!("  Inclusion Promise: yes (SET)");
         }
+    }
+
+    // Print RFC3161 timestamp info
+    let ts_count = bundle
+        .verification_material
+        .timestamp_verification_data
+        .rfc3161_timestamps
+        .len();
+    if ts_count > 0 {
+        println!("  RFC3161 Timestamps: {}", ts_count);
+    } else {
+        println!("  RFC3161 Timestamps: none (V2 bundles require timestamps!)");
     }
 
     println!("\nVerify with:");
@@ -260,10 +277,11 @@ fn print_usage(program: &str) {
     eprintln!("  -o, --output <FILE>  Output bundle path (default: <artifact>.sigstore.json)");
     eprintln!("  -t, --token <TOKEN>  OIDC identity token (skips interactive auth)");
     eprintln!("      --staging        Use Sigstore staging infrastructure");
-    eprintln!("      --v1             Use Rekor V1 API (legacy, uses SET instead of inclusion proof)");
+    eprintln!("      --v2             Use Rekor V2 API (uses log2025-1.rekor.sigstore.dev)");
     eprintln!("  -h, --help           Print this help message");
     eprintln!();
-    eprintln!("By default, Rekor V2 API is used which provides inclusion proofs with checkpoints.");
+    eprintln!("By default, Rekor V1 API is used (rekor.sigstore.dev).");
+    eprintln!("Use --v2 to use the new Rekor V2 API with inclusion proofs and checkpoints.");
     eprintln!();
     eprintln!("Examples:");
     eprintln!("  # Sign interactively (opens browser for OAuth)");
@@ -275,8 +293,8 @@ fn print_usage(program: &str) {
     eprintln!("  # Sign with a pre-obtained token");
     eprintln!("  {} --token \"$OIDC_TOKEN\" artifact.txt", program);
     eprintln!();
-    eprintln!("  # Sign using legacy V1 API");
-    eprintln!("  {} --v1 artifact.txt", program);
+    eprintln!("  # Sign using Rekor V2 API");
+    eprintln!("  {} --v2 artifact.txt", program);
     eprintln!();
     eprintln!("In GitHub Actions:");
     eprintln!("  # Add 'id-token: write' permission, then run without --token");

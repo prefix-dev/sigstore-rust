@@ -10,12 +10,33 @@ use std::collections::HashMap;
 /// Rekor API version
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RekorApiVersion {
-    /// V1 API - legacy, uses hashedrekord 0.0.1 and dsse 0.0.1
-    V1,
-    /// V2 API - current, uses hashedrekord 0.0.2 and dsse 0.0.2
-    /// Returns inclusion proofs with checkpoints
+    /// V1 API - uses hashedrekord 0.0.1 and dsse 0.0.1
+    /// Available at: https://rekor.sigstore.dev
     #[default]
+    V1,
+    /// V2 API - uses hashedrekord 0.0.2 and dsse 0.0.2
+    /// Returns inclusion proofs with checkpoints
+    /// Available at: https://log2025-1.rekor.sigstore.dev (as of Oct 2025)
+    /// Note: V2 uses a different URL than V1!
     V2,
+}
+
+impl RekorApiVersion {
+    /// Get the default Rekor URL for this API version
+    pub fn default_url(&self) -> &'static str {
+        match self {
+            RekorApiVersion::V1 => "https://rekor.sigstore.dev",
+            RekorApiVersion::V2 => "https://log2025-1.rekor.sigstore.dev",
+        }
+    }
+
+    /// Get the default staging Rekor URL for this API version
+    pub fn default_staging_url(&self) -> &'static str {
+        match self {
+            RekorApiVersion::V1 => "https://rekor.sigstage.dev",
+            RekorApiVersion::V2 => "https://log2025-alpha2.rekor.sigstage.dev",
+        }
+    }
 }
 
 /// A log entry from Rekor

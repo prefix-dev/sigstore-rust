@@ -45,31 +45,6 @@ pub fn extract_signature(content: &SignatureContent) -> Result<SignatureBytes> {
     }
 }
 
-/// Extract the integrated time from transparency log entries
-/// Returns the earliest integrated time if multiple entries are present
-pub fn extract_integrated_time(bundle: &Bundle) -> Result<Option<i64>> {
-    let mut earliest_time: Option<i64> = None;
-
-    for entry in &bundle.verification_material.tlog_entries {
-        if !entry.integrated_time.is_empty() {
-            if let Ok(time) = entry.integrated_time.parse::<i64>() {
-                // Ignore 0 as it indicates invalid/missing time (e.g. from test instances)
-                if time > 0 {
-                    if let Some(earliest) = earliest_time {
-                        if time < earliest {
-                            earliest_time = Some(time);
-                        }
-                    } else {
-                        earliest_time = Some(time);
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(earliest_time)
-}
-
 /// Extract and verify TSA RFC 3161 timestamps
 /// Returns the earliest verified timestamp if any are present
 pub fn extract_tsa_timestamp(
@@ -159,22 +134,95 @@ pub fn extract_tsa_timestamp(
     Ok(earliest_timestamp)
 }
 
-/// Determine validation time from timestamps
-/// Priority order:
+/// Check if bundle contains V2 tlog entries (hashedrekord/dsse v0.0.2)
+/// V2 entries have integrated_time=0 and require RFC3161 timestamps
+pub fn has_v2_tlog_entries(bundle: &Bundle) -> bool {
+    bundle
+        .verification_material
+        .tlog_entries
+        .iter()
+        .any(|entry| entry.kind_version.version == "0.0.2")
+}
+
+/// Extract integrated time from V1 tlog entries that have inclusion promises.
+///
+/// Per sigstore-python, integrated_time is only valid as a timestamp source when:
+/// 1. The entry has an inclusion_promise (SET) that cryptographically binds it
+/// 2. The entry is a V1 type (hashedrekord/dsse v0.0.1)
+/// 3. The integrated_time is > 0
+///
+/// Returns the earliest valid integrated time if any are present.
+fn extract_v1_integrated_time_with_promise(bundle: &Bundle) -> Option<i64> {
+    let mut earliest_time: Option<i64> = None;
+
+    for entry in &bundle.verification_material.tlog_entries {
+        // Only V1 entries (0.0.1) with inclusion promises are valid timestamp sources
+        let is_v1 = entry.kind_version.version == "0.0.1"
+            && (entry.kind_version.kind == "hashedrekord" || entry.kind_version.kind == "dsse");
+
+        if !is_v1 || entry.inclusion_promise.is_none() {
+            continue;
+        }
+
+        if let Ok(time) = entry.integrated_time.parse::<i64>() {
+            if time > 0 {
+                if let Some(earliest) = earliest_time {
+                    if time < earliest {
+                        earliest_time = Some(time);
+                    }
+                } else {
+                    earliest_time = Some(time);
+                }
+            }
+        }
+    }
+
+    earliest_time
+}
+
+/// Determine validation time from timestamps.
+///
+/// At least one verified timestamp source is REQUIRED. This matches sigstore-python's
+/// behavior which enforces `VERIFIED_TIME_THRESHOLD = 1`.
+///
+/// Valid timestamp sources (in priority order):
 /// 1. TSA timestamp (RFC 3161) - most authoritative
-/// 2. Integrated time from transparency log
-/// 3. Current time - fallback
+/// 2. Integrated time from V1 tlog entries with inclusion promises
+///
+/// Note: There is NO fallback to current time. If no verified timestamp is found,
+/// verification fails.
 pub fn determine_validation_time(
     bundle: &Bundle,
     signature: &SignatureBytes,
     trusted_root: &TrustedRoot,
 ) -> Result<i64> {
+    // Try TSA timestamp first (most authoritative)
     if let Some(tsa_time) = extract_tsa_timestamp(bundle, signature.as_bytes(), trusted_root)? {
-        Ok(tsa_time)
-    } else if let Some(integrated_time) = extract_integrated_time(bundle)? {
-        Ok(integrated_time)
+        return Ok(tsa_time);
+    }
+
+    // Try integrated time from V1 tlog entries with inclusion promises
+    // Per sigstore-python: integrated_time only counts if accompanied by inclusion_promise
+    if let Some(integrated_time) = extract_v1_integrated_time_with_promise(bundle) {
+        return Ok(integrated_time);
+    }
+
+    // No verified timestamp found - fail verification
+    // This matches sigstore-python's behavior: "not enough sources of verified time"
+    let is_v2 = has_v2_tlog_entries(bundle);
+    if is_v2 {
+        Err(Error::Verification(
+            "V2 bundle requires RFC3161 timestamp but none could be verified. \
+             V2 tlog entries have integrated_time=0 by design. \
+             Ensure TSA certificates are present in the trusted root."
+                .to_string(),
+        ))
     } else {
-        Ok(chrono::Utc::now().timestamp())
+        Err(Error::Verification(
+            "No verified timestamp found. V1 bundles require either an RFC3161 timestamp \
+             or a tlog entry with both integrated_time > 0 and an inclusion_promise (SET)."
+                .to_string(),
+        ))
     }
 }
 

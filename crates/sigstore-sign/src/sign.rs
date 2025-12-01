@@ -10,6 +10,7 @@ use sigstore_oidc::IdentityToken;
 use sigstore_rekor::{
     DsseEntry, DsseEntryV2, HashedRekord, HashedRekordV2, RekorApiVersion, RekorClient,
 };
+use sigstore_trust_root::SigningConfig as TufSigningConfig;
 use sigstore_tsa::TimestampClient;
 use sigstore_types::{
     Artifact, Bundle, DerCertificate, DsseEnvelope, DsseSignature, KeyId, PayloadBytes, Sha256Hash,
@@ -33,31 +34,90 @@ pub struct SigningConfig {
 
 impl Default for SigningConfig {
     fn default() -> Self {
+        let rekor_api_version = RekorApiVersion::default();
         Self {
             fulcio_url: "https://fulcio.sigstore.dev".to_string(),
-            rekor_url: "https://rekor.sigstore.dev".to_string(),
+            rekor_url: rekor_api_version.default_url().to_string(),
             tsa_url: Some("https://timestamp.sigstore.dev/api/v1/timestamp".to_string()),
             signing_scheme: SigningScheme::EcdsaP256Sha256,
-            rekor_api_version: RekorApiVersion::default(), // V2
+            rekor_api_version,
         }
     }
 }
 
 impl SigningConfig {
     /// Create configuration for Sigstore public-good instance
+    ///
+    /// This uses the embedded signing config to get the best available endpoints.
     pub fn production() -> Self {
-        Self::default()
+        Self::from_tuf_config(&TufSigningConfig::production().expect("embedded config is valid"))
     }
 
     /// Create configuration for Sigstore staging instance
+    ///
+    /// This uses the embedded signing config to get the best available endpoints.
     pub fn staging() -> Self {
+        Self::from_tuf_config(&TufSigningConfig::staging().expect("embedded config is valid"))
+    }
+
+    /// Create configuration from a TUF signing config
+    ///
+    /// This extracts the best available endpoints from the signing config,
+    /// preferring higher API versions when available.
+    ///
+    /// # Arguments
+    ///
+    /// * `tuf_config` - The signing config from TUF
+    pub fn from_tuf_config(tuf_config: &TufSigningConfig) -> Self {
+        Self::from_tuf_config_with_rekor_version(tuf_config, None)
+    }
+
+    /// Create configuration from a TUF signing config with optional forced Rekor version
+    ///
+    /// # Arguments
+    ///
+    /// * `tuf_config` - The signing config from TUF
+    /// * `force_rekor_version` - If Some, force a specific Rekor API version
+    pub fn from_tuf_config_with_rekor_version(
+        tuf_config: &TufSigningConfig,
+        force_rekor_version: Option<u32>,
+    ) -> Self {
+        let fulcio_url = tuf_config
+            .get_fulcio_url()
+            .map(|e| e.url.clone())
+            .unwrap_or_else(|| "https://fulcio.sigstore.dev".to_string());
+
+        let (rekor_url, rekor_api_version) =
+            if let Some(rekor) = tuf_config.get_rekor_url(force_rekor_version) {
+                let version = if rekor.major_api_version == 2 {
+                    RekorApiVersion::V2
+                } else {
+                    RekorApiVersion::V1
+                };
+                (rekor.url.clone(), version)
+            } else {
+                (
+                    "https://rekor.sigstore.dev".to_string(),
+                    RekorApiVersion::V1,
+                )
+            };
+
+        let tsa_url = tuf_config.get_tsa_url().map(|e| e.url.clone());
+
         Self {
-            fulcio_url: "https://fulcio.sigstage.dev".to_string(),
-            rekor_url: "https://rekor.sigstage.dev".to_string(),
-            tsa_url: Some("https://timestamp.sigstage.dev/api/v1/timestamp".to_string()),
+            fulcio_url,
+            rekor_url,
+            tsa_url,
             signing_scheme: SigningScheme::EcdsaP256Sha256,
-            rekor_api_version: RekorApiVersion::default(), // V2
+            rekor_api_version,
         }
+    }
+
+    /// Set the Rekor API version and automatically update the URL
+    pub fn with_rekor_version(mut self, version: RekorApiVersion) -> Self {
+        self.rekor_api_version = version;
+        self.rekor_url = version.default_url().to_string();
+        self
     }
 }
 
@@ -242,24 +302,23 @@ impl Signer {
         let rekor = RekorClient::new(&self.rekor_url);
 
         // Use V1 or V2 API based on configuration
-        let (log_entry, version) = match self.rekor_api_version {
-            RekorApiVersion::V1 => {
-                let hashed_rekord = HashedRekord::new(&artifact_hash, signature, certificate);
-                let entry = rekor
-                    .create_entry(hashed_rekord)
-                    .await
-                    .map_err(|e| Error::Signing(format!("Failed to create Rekor entry: {}", e)))?;
-                (entry, "0.0.1")
-            }
-            RekorApiVersion::V2 => {
-                let hashed_rekord = HashedRekordV2::new(&artifact_hash, signature, certificate);
-                let entry = rekor
-                    .create_entry_v2(hashed_rekord)
-                    .await
-                    .map_err(|e| Error::Signing(format!("Failed to create Rekor entry: {}", e)))?;
-                (entry, "0.0.2")
-            }
-        };
+        let (log_entry, version) =
+            match self.rekor_api_version {
+                RekorApiVersion::V1 => {
+                    let hashed_rekord = HashedRekord::new(&artifact_hash, signature, certificate);
+                    let entry = rekor.create_entry(hashed_rekord).await.map_err(|e| {
+                        Error::Signing(format!("Failed to create Rekor entry: {}", e))
+                    })?;
+                    (entry, "0.0.1")
+                }
+                RekorApiVersion::V2 => {
+                    let hashed_rekord = HashedRekordV2::new(&artifact_hash, signature, certificate);
+                    let entry = rekor.create_entry_v2(hashed_rekord).await.map_err(|e| {
+                        Error::Signing(format!("Failed to create Rekor entry: {}", e))
+                    })?;
+                    (entry, "0.0.2")
+                }
+            };
 
         // Build TlogEntry from the log entry response
         let tlog_builder = TlogEntryBuilder::from_log_entry(&log_entry, "hashedrekord", version);
@@ -374,22 +433,16 @@ impl Signer {
         let (log_entry, version) = match self.rekor_api_version {
             RekorApiVersion::V1 => {
                 let dsse_entry = DsseEntry::new(envelope, certificate);
-                let entry = rekor
-                    .create_dsse_entry(dsse_entry)
-                    .await
-                    .map_err(|e| {
-                        Error::Signing(format!("Failed to create DSSE Rekor entry: {}", e))
-                    })?;
+                let entry = rekor.create_dsse_entry(dsse_entry).await.map_err(|e| {
+                    Error::Signing(format!("Failed to create DSSE Rekor entry: {}", e))
+                })?;
                 (entry, "0.0.1")
             }
             RekorApiVersion::V2 => {
                 let dsse_entry = DsseEntryV2::new(envelope, certificate);
-                let entry = rekor
-                    .create_dsse_entry_v2(dsse_entry)
-                    .await
-                    .map_err(|e| {
-                        Error::Signing(format!("Failed to create DSSE Rekor entry: {}", e))
-                    })?;
+                let entry = rekor.create_dsse_entry_v2(dsse_entry).await.map_err(|e| {
+                    Error::Signing(format!("Failed to create DSSE Rekor entry: {}", e))
+                })?;
                 (entry, "0.0.2")
             }
         };

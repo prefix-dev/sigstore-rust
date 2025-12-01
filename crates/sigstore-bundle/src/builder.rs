@@ -280,7 +280,13 @@ impl TlogEntryBuilder {
                 kind: self.kind,
                 version: self.kind_version,
             },
-            integrated_time: self.integrated_time.to_string(),
+            // For V2 entries, integrated_time is 0 and should be omitted from JSON
+            // (skip_serializing_if = "String::is_empty" handles this)
+            integrated_time: if self.integrated_time == 0 {
+                String::new()
+            } else {
+                self.integrated_time.to_string()
+            },
             inclusion_promise: self.inclusion_promise,
             inclusion_proof: self.inclusion_proof,
             canonicalized_body: CanonicalizedBody::new(self.canonicalized_body),
