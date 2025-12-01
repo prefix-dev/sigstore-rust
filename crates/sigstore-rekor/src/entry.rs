@@ -11,12 +11,12 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RekorApiVersion {
     /// V1 API - uses hashedrekord 0.0.1 and dsse 0.0.1
-    /// Available at: https://rekor.sigstore.dev
+    /// Available at: <https://rekor.sigstore.dev>
     #[default]
     V1,
     /// V2 API - uses hashedrekord 0.0.2 and dsse 0.0.2
     /// Returns inclusion proofs with checkpoints
-    /// Available at: https://log2025-1.rekor.sigstore.dev (as of Oct 2025)
+    /// Available at: <https://log2025-1.rekor.sigstore.dev> (as of Oct 2025)
     /// Note: V2 uses a different URL than V1!
     V2,
 }
