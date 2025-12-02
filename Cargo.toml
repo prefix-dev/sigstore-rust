@@ -76,6 +76,9 @@ tracing = { version = "0.1" }
 # Serialization / JSON
 serde_json_canonicalizer = "0.3"
 
+# Sigstore protobuf specs
+sigstore_protobuf_specs = "0.5"
+
 # TUF / Package management
 tough = { version = "0.21", features = ["http"] }
 

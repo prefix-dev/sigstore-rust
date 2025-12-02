@@ -7,9 +7,9 @@ use crate::error::{Error, Result};
 use base64::Engine;
 use serde::Serialize;
 use sigstore_crypto::{verify_signature, Checkpoint, SigningScheme};
-use sigstore_trust_root::TrustedRoot;
+use sigstore_trust_root::{TrustedRoot, TrustedRootExt};
 use sigstore_types::bundle::InclusionProof;
-use sigstore_types::{Bundle, SignatureBytes, TransparencyLogEntry};
+use sigstore_types::{Bundle, DerPublicKey, SignatureBytes, TransparencyLogEntry};
 
 /// Verify transparency log entries (checkpoints and SETs)
 ///
@@ -26,16 +26,19 @@ pub fn verify_tlog_entries(
     not_after: i64,
     clock_skew_seconds: i64,
 ) -> Result<Option<i64>> {
+    let vm = match bundle.verification_material.as_ref() {
+        Some(vm) => vm,
+        None => return Ok(None),
+    };
+
     let mut integrated_time_result: Option<i64> = None;
 
-    for entry in &bundle.verification_material.tlog_entries {
+    for entry in &vm.tlog_entries {
         // Verify checkpoint signature if present
         if let Some(ref inclusion_proof) = entry.inclusion_proof {
-            verify_checkpoint(
-                &inclusion_proof.checkpoint.envelope,
-                inclusion_proof,
-                trusted_root,
-            )?;
+            if let Some(ref checkpoint) = inclusion_proof.checkpoint {
+                verify_checkpoint(&checkpoint.envelope, inclusion_proof, trusted_root)?;
+            }
         }
 
         // Verify inclusion promise (SET) if present
@@ -43,38 +46,35 @@ pub fn verify_tlog_entries(
             verify_set(entry, trusted_root)?;
         }
 
-        // Validate integrated time
-        if !entry.integrated_time.is_empty() {
-            if let Ok(time) = entry.integrated_time.parse::<i64>() {
-                // Ignore 0 as it indicates invalid/missing time
-                if time > 0 {
-                    // Check that integrated time is not in the future (with clock skew tolerance)
-                    let now = chrono::Utc::now().timestamp();
-                    if time > now + clock_skew_seconds {
-                        return Err(Error::Verification(format!(
-                            "integrated time {} is in the future (current time: {}, tolerance: {}s)",
-                            time, now, clock_skew_seconds
-                        )));
-                    }
-
-                    // Check that integrated time is within certificate validity period
-                    if time < not_before {
-                        return Err(Error::Verification(format!(
-                            "integrated time {} is before certificate validity (not_before: {})",
-                            time, not_before
-                        )));
-                    }
-
-                    if time > not_after {
-                        return Err(Error::Verification(format!(
-                            "integrated time {} is after certificate validity (not_after: {})",
-                            time, not_after
-                        )));
-                    }
-
-                    integrated_time_result = Some(time);
-                }
+        // Validate integrated time (now i64, not String)
+        let time = entry.integrated_time;
+        // Ignore 0 as it indicates invalid/missing time (V2 entries have integrated_time=0)
+        if time > 0 {
+            // Check that integrated time is not in the future (with clock skew tolerance)
+            let now = chrono::Utc::now().timestamp();
+            if time > now + clock_skew_seconds {
+                return Err(Error::Verification(format!(
+                    "integrated time {} is in the future (current time: {}, tolerance: {}s)",
+                    time, now, clock_skew_seconds
+                )));
             }
+
+            // Check that integrated time is within certificate validity period
+            if time < not_before {
+                return Err(Error::Verification(format!(
+                    "integrated time {} is before certificate validity (not_before: {})",
+                    time, not_before
+                )));
+            }
+
+            if time > not_after {
+                return Err(Error::Verification(format!(
+                    "integrated time {} is after certificate validity (not_after: {})",
+                    time, not_after
+                )));
+            }
+
+            integrated_time_result = Some(time);
         }
     }
 
@@ -96,14 +96,14 @@ pub fn verify_checkpoint(
     // Verify that the checkpoint's root hash matches the inclusion proof's root hash
     let checkpoint_root_hash = &checkpoint.root_hash;
 
-    // The root hash in the inclusion proof is already a Sha256Hash
+    // The root hash in the inclusion proof is now Vec<u8>
     let proof_root_hash = &inclusion_proof.root_hash;
 
-    if checkpoint_root_hash.as_bytes() != proof_root_hash.as_bytes() {
+    if checkpoint_root_hash.as_bytes() != proof_root_hash.as_slice() {
         return Err(Error::Verification(format!(
             "Checkpoint root hash mismatch: expected {}, got {}",
             checkpoint_root_hash.to_hex(),
-            proof_root_hash.to_hex()
+            hex::encode(proof_root_hash)
         )));
     }
 
@@ -116,11 +116,12 @@ pub fn verify_checkpoint(
     for sig in &checkpoint.signatures {
         // Find the key with matching key hint
         for (key_hint, public_key) in &rekor_keys {
-            if &sig.key_id == key_hint {
+            if sig.key_id.as_ref() == key_hint {
                 // Found matching key, verify the signature using automatic key type detection
                 let message = checkpoint.signed_data();
+                let der_key = DerPublicKey::from_bytes(public_key);
 
-                verify_signature_auto(public_key, &sig.signature, message).map_err(|e| {
+                verify_signature_auto(&der_key, &sig.signature, message).map_err(|e| {
                     Error::Verification(format!("Checkpoint signature verification failed: {}", e))
                 })?;
 
@@ -152,28 +153,31 @@ pub fn verify_set(entry: &TransparencyLogEntry, trusted_root: &TrustedRoot) -> R
         .as_ref()
         .ok_or(Error::Verification("Missing inclusion promise".into()))?;
 
+    // Get log_id (now Option<LogId> with key_id: Vec<u8>)
+    let log_id = entry
+        .log_id
+        .as_ref()
+        .ok_or_else(|| Error::Verification("Missing log ID".to_string()))?;
+
+    // Convert log key_id to base64 string for lookup
+    let log_key_id_b64 = base64::engine::general_purpose::STANDARD.encode(&log_id.key_id);
+
     // Find the key for the log ID
-    let log_key = trusted_root
-        .rekor_key_for_log(&entry.log_id.key_id)
-        .map_err(|_| Error::Verification(format!("Unknown log ID: {}", entry.log_id.key_id)))?;
+    let log_key_bytes = trusted_root
+        .rekor_key_for_log(&log_key_id_b64)
+        .map_err(|_| Error::Verification(format!("Unknown log ID: {}", log_key_id_b64)))?;
+    let log_key = DerPublicKey::from_bytes(&log_key_bytes);
 
     // Construct the payload (base64-encoded body)
-    let body = entry.canonicalized_body.to_base64();
+    let body = base64::engine::general_purpose::STANDARD.encode(&entry.canonicalized_body);
 
-    let integrated_time = entry
-        .integrated_time
-        .parse::<i64>()
-        .map_err(|_| Error::Verification("Invalid integrated time".into()))?;
-    let log_index = entry
-        .log_index
-        .as_u64()
-        .map_err(|_| Error::Verification("Invalid log index".into()))? as i64;
+    // integrated_time is now i64
+    let integrated_time = entry.integrated_time;
+    // log_index is now i64
+    let log_index = entry.log_index;
 
     // Log ID for payload must be hex encoded
-    let log_id_bytes = base64::engine::general_purpose::STANDARD
-        .decode(entry.log_id.key_id.as_str())
-        .map_err(|_| Error::Verification("Invalid base64 log ID".into()))?;
-    let log_id_hex = hex::encode(log_id_bytes);
+    let log_id_hex = hex::encode(&log_id.key_id);
 
     let payload = RekorPayload {
         body,
@@ -185,8 +189,8 @@ pub fn verify_set(entry: &TransparencyLogEntry, trusted_root: &TrustedRoot) -> R
     let canonical_json = serde_json_canonicalizer::to_vec(&payload)
         .map_err(|e| Error::Verification(format!("Canonicalization failed: {}", e)))?;
 
-    // Get signature bytes from signed timestamp
-    let signature = SignatureBytes::new(promise.signed_entry_timestamp.as_bytes().to_vec());
+    // Get signature bytes from signed timestamp (now Vec<u8>)
+    let signature = SignatureBytes::new(promise.signed_entry_timestamp.clone());
 
     verify_signature(
         &log_key,

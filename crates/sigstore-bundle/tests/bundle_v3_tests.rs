@@ -3,7 +3,7 @@
 //! These tests use real bundle fixtures from the sigstore-python project.
 
 use sigstore_bundle::{validate_bundle, validate_bundle_with_options, ValidationOptions};
-use sigstore_types::{Bundle, LogIndex, MediaType};
+use sigstore_types::{Bundle, BundleContent, BundleExt, InclusionProofExt, MediaType};
 
 /// Test bundle JSON from sigstore-python/test/assets/bundle_v3.txt.sigstore
 const BUNDLE_V3_JSON: &str = r#"{
@@ -71,12 +71,14 @@ fn test_parse_v3_bundle() {
     assert!(bundle.signing_certificate().is_some());
 
     // Check tlog entries
-    assert_eq!(bundle.verification_material.tlog_entries.len(), 1);
-    let entry = &bundle.verification_material.tlog_entries[0];
-    assert_eq!(entry.log_index, LogIndex::new("25915956".to_string()));
-    assert_eq!(entry.integrated_time, "1712085549");
-    assert_eq!(entry.kind_version.kind, "hashedrekord");
-    assert_eq!(entry.kind_version.version, "0.0.1");
+    let vm = bundle.verification_material.as_ref().unwrap();
+    assert_eq!(vm.tlog_entries.len(), 1);
+    let entry = &vm.tlog_entries[0];
+    assert_eq!(entry.log_index, 25915956_i64);
+    assert_eq!(entry.integrated_time, 1712085549_i64);
+    let kv = entry.kind_version.as_ref().unwrap();
+    assert_eq!(kv.kind, "hashedrekord");
+    assert_eq!(kv.version, "0.0.1");
 
     // Check inclusion proof exists
     assert!(bundle.has_inclusion_proof());
@@ -84,8 +86,8 @@ fn test_parse_v3_bundle() {
 
     // Check inclusion proof details
     let proof = entry.inclusion_proof.as_ref().unwrap();
-    assert_eq!(proof.log_index, LogIndex::new("25901137".to_string()));
-    assert_eq!(proof.tree_size, "25901138");
+    assert_eq!(proof.log_index, 25901137_i64);
+    assert_eq!(proof.tree_size, 25901138_i64);
     assert_eq!(proof.hashes.len(), 11);
 }
 
@@ -115,11 +117,12 @@ fn test_validate_v3_bundle_with_options() {
 #[test]
 fn test_v3_bundle_checkpoint_parsing() {
     let bundle = Bundle::from_json(BUNDLE_V3_JSON).unwrap();
-    let entry = &bundle.verification_material.tlog_entries[0];
+    let vm = bundle.verification_material.as_ref().unwrap();
+    let entry = &vm.tlog_entries[0];
     let proof = entry.inclusion_proof.as_ref().unwrap();
 
-    // Parse the checkpoint
-    let checkpoint = proof.checkpoint.parse().unwrap();
+    // Parse the checkpoint using the extension trait
+    let checkpoint = proof.parse_checkpoint().unwrap();
 
     assert_eq!(
         checkpoint.origin,
@@ -134,20 +137,23 @@ fn test_v3_bundle_message_signature() {
     let bundle = Bundle::from_json(BUNDLE_V3_JSON).unwrap();
 
     match &bundle.content {
-        sigstore_types::bundle::SignatureContent::MessageSignature(sig) => {
+        Some(BundleContent::MessageSignature(sig)) => {
             // Check signature is present
-            assert!(!sig.signature.as_bytes().is_empty());
+            assert!(!sig.signature.is_empty());
 
             // Check message digest
             let digest = sig.message_digest.as_ref().unwrap();
             assert_eq!(
-                digest.algorithm,
-                sigstore_types::hash::HashAlgorithm::Sha2256
+                digest.algorithm(),
+                sigstore_types::ProtoHashAlgorithm::Sha2256
             );
-            assert!(!digest.digest.as_bytes().is_empty());
+            assert!(!digest.digest.is_empty());
         }
-        sigstore_types::bundle::SignatureContent::DsseEnvelope(_) => {
+        Some(BundleContent::DsseEnvelope(_)) => {
             panic!("Expected MessageSignature, got DsseEnvelope");
+        }
+        None => {
+            panic!("Expected MessageSignature, got None");
         }
     }
 }
@@ -164,10 +170,9 @@ fn test_v3_bundle_serialization_roundtrip() {
 
     // Compare
     assert_eq!(bundle.media_type, bundle2.media_type);
-    assert_eq!(
-        bundle.verification_material.tlog_entries.len(),
-        bundle2.verification_material.tlog_entries.len()
-    );
+    let vm1 = bundle.verification_material.as_ref().unwrap();
+    let vm2 = bundle2.verification_material.as_ref().unwrap();
+    assert_eq!(vm1.tlog_entries.len(), vm2.tlog_entries.len());
 }
 
 #[test]
@@ -206,28 +211,35 @@ fn test_v3_bundle_certificate_extraction() {
 #[test]
 fn test_inclusion_proof_verification() {
     use sigstore_merkle::{hash_leaf, verify_inclusion_proof};
+    use sigstore_types::Sha256Hash;
 
     let bundle = Bundle::from_json(BUNDLE_V3_JSON).unwrap();
-    let entry = &bundle.verification_material.tlog_entries[0];
+    let vm = bundle.verification_material.as_ref().unwrap();
+    let entry = &vm.tlog_entries[0];
     let proof = entry.inclusion_proof.as_ref().unwrap();
 
-    // Get the canonicalized body bytes
-    let body = entry.canonicalized_body.as_bytes();
+    // Get the canonicalized body bytes (now Vec<u8>)
+    let body = &entry.canonicalized_body;
 
     // Hash the leaf
     let leaf_hash = hash_leaf(body);
 
-    // Proof hashes are already Vec<Sha256Hash>
-    let proof_hashes = &proof.hashes;
+    // Proof hashes are Vec<Vec<u8>>, convert to Vec<Sha256Hash>
+    let proof_hashes: Vec<Sha256Hash> = proof
+        .hashes
+        .iter()
+        .map(|h| Sha256Hash::try_from_slice(h).unwrap())
+        .collect();
 
-    // Root hash is already a Sha256Hash
-    let root_hash = &proof.root_hash;
+    // Root hash is Vec<u8>, convert to Sha256Hash
+    let root_hash = Sha256Hash::try_from_slice(&proof.root_hash).unwrap();
 
     // Verify the inclusion proof
-    let leaf_index: u64 = proof.log_index.as_u64().unwrap();
-    let tree_size: u64 = proof.tree_size.parse().unwrap();
+    let leaf_index: u64 = proof.log_index as u64;
+    let tree_size: u64 = proof.tree_size as u64;
 
-    let result = verify_inclusion_proof(&leaf_hash, leaf_index, tree_size, proof_hashes, root_hash);
+    let result =
+        verify_inclusion_proof(&leaf_hash, leaf_index, tree_size, &proof_hashes, &root_hash);
 
     assert!(
         result.is_ok(),

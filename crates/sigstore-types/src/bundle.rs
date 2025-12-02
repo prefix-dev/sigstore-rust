@@ -3,27 +3,36 @@
 //! The bundle is the core artifact produced by signing and consumed by verification.
 //! It contains the signature, verification material (certificate or public key),
 //! and transparency log entries.
+//!
+//! This module re-exports the official Sigstore protobuf types and provides
+//! extension traits for common operations.
 
 use crate::checkpoint::Checkpoint;
-use crate::dsse::DsseEnvelope;
-use crate::encoding::{
-    CanonicalizedBody, DerCertificate, LogIndex, LogKeyId, Sha256Hash, SignatureBytes,
-    SignedTimestamp, TimestampToken,
-};
+use crate::encoding::DerCertificate;
 use crate::error::{Error, Result};
-use crate::hash::HashAlgorithm;
-use serde::{Deserialize, Deserializer, Serialize};
 use std::str::FromStr;
 
-/// Deserialize a field that may be null as the default value
-fn deserialize_null_as_default<'de, D, T>(deserializer: D) -> std::result::Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Default + Deserialize<'de>,
-{
-    let opt = Option::deserialize(deserializer)?;
-    Ok(opt.unwrap_or_default())
-}
+// Re-export protobuf types
+pub use sigstore_protobuf_specs::dev::sigstore::{
+    bundle::v1::{
+        bundle::Content as BundleContent,
+        verification_material::Content as VerificationMaterialContent, Bundle,
+        TimestampVerificationData, VerificationMaterial,
+    },
+    common::v1::{
+        HashAlgorithm as ProtoHashAlgorithm, HashOutput, LogId, MessageSignature,
+        PublicKeyIdentifier, Rfc3161SignedTimestamp, X509Certificate, X509CertificateChain,
+    },
+    rekor::v1::{
+        Checkpoint as ProtoCheckpoint, InclusionPromise, InclusionProof, KindVersion,
+        TransparencyLogEntry,
+    },
+};
+
+// Re-export DSSE envelope from intoto
+pub use sigstore_protobuf_specs::io::intoto::{
+    Envelope as DsseEnvelope, Signature as DsseSignature,
+};
 
 /// Sigstore bundle media types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,316 +71,216 @@ impl FromStr for MediaType {
     }
 }
 
-/// Bundle version enum for serde
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BundleVersion {
-    /// Version 0.1
-    #[serde(rename = "0.1")]
-    V0_1,
-    /// Version 0.2
-    #[serde(rename = "0.2")]
-    V0_2,
-    /// Version 0.3
-    #[serde(rename = "0.3")]
-    V0_3,
+/// Extension trait for Bundle with helper methods
+pub trait BundleExt {
+    /// Parse a bundle from JSON
+    fn from_json(json: &str) -> Result<Bundle>;
+
+    /// Serialize the bundle to JSON
+    fn to_json(&self) -> Result<String>;
+
+    /// Serialize the bundle to pretty-printed JSON
+    fn to_json_pretty(&self) -> Result<String>;
+
+    /// Get the bundle version from the media type
+    fn version(&self) -> Result<MediaType>;
+
+    /// Get the signing certificate if present (DER-encoded)
+    fn signing_certificate(&self) -> Option<DerCertificate>;
+
+    /// Check if the bundle has an inclusion proof
+    fn has_inclusion_proof(&self) -> bool;
+
+    /// Check if the bundle has an inclusion promise (SET)
+    fn has_inclusion_promise(&self) -> bool;
+
+    /// Get the transparency log entries
+    fn tlog_entries(&self) -> &[TransparencyLogEntry];
+
+    /// Check if bundle contains a message signature
+    fn is_message_signature(&self) -> bool;
+
+    /// Check if bundle contains a DSSE envelope
+    fn is_dsse_envelope(&self) -> bool;
+
+    /// Get the message signature if present
+    fn message_signature(&self) -> Option<&MessageSignature>;
+
+    /// Get the DSSE envelope if present
+    fn dsse_envelope(&self) -> Option<&DsseEnvelope>;
 }
 
-/// The main Sigstore bundle structure
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Bundle {
-    /// Media type identifying the bundle version
-    pub media_type: String,
-    /// Verification material (certificate chain or public key)
-    pub verification_material: VerificationMaterial,
-    /// The content being signed (message signature or DSSE envelope)
-    #[serde(flatten)]
-    pub content: SignatureContent,
-}
-
-impl Bundle {
-    /// Parse a bundle from JSON, preserving raw DSSE envelope for hash verification
-    pub fn from_json(json: &str) -> Result<Self> {
+impl BundleExt for Bundle {
+    fn from_json(json: &str) -> Result<Bundle> {
         serde_json::from_str(json).map_err(Error::Json)
     }
 
-    /// Serialize the bundle to JSON
-    pub fn to_json(&self) -> Result<String> {
+    fn to_json(&self) -> Result<String> {
         serde_json::to_string(self).map_err(Error::Json)
     }
 
-    /// Serialize the bundle to pretty-printed JSON
-    pub fn to_json_pretty(&self) -> Result<String> {
+    fn to_json_pretty(&self) -> Result<String> {
         serde_json::to_string_pretty(self).map_err(Error::Json)
     }
 
-    /// Get the bundle version from the media type
-    pub fn version(&self) -> Result<MediaType> {
+    fn version(&self) -> Result<MediaType> {
         MediaType::from_str(&self.media_type)
     }
 
-    /// Get the signing certificate if present
-    pub fn signing_certificate(&self) -> Option<&DerCertificate> {
-        match &self.verification_material.content {
-            VerificationMaterialContent::Certificate(cert) => Some(&cert.raw_bytes),
-            VerificationMaterialContent::X509CertificateChain { certificates } => {
-                certificates.first().map(|c| &c.raw_bytes)
+    fn signing_certificate(&self) -> Option<DerCertificate> {
+        let vm = self.verification_material.as_ref()?;
+        match &vm.content {
+            Some(VerificationMaterialContent::Certificate(cert)) => {
+                Some(DerCertificate::from_bytes(&cert.raw_bytes))
             }
-            VerificationMaterialContent::PublicKey { .. } => None,
+            Some(VerificationMaterialContent::X509CertificateChain(chain)) => chain
+                .certificates
+                .first()
+                .map(|c| DerCertificate::from_bytes(&c.raw_bytes)),
+            Some(VerificationMaterialContent::PublicKey(_)) => None,
+            None => None,
         }
     }
 
-    /// Check if the bundle has an inclusion proof
-    pub fn has_inclusion_proof(&self) -> bool {
-        self.verification_material
-            .tlog_entries
+    fn has_inclusion_proof(&self) -> bool {
+        self.tlog_entries()
             .iter()
             .any(|e| e.inclusion_proof.is_some())
     }
 
-    /// Check if the bundle has an inclusion promise (SET)
-    pub fn has_inclusion_promise(&self) -> bool {
-        self.verification_material
-            .tlog_entries
+    fn has_inclusion_promise(&self) -> bool {
+        self.tlog_entries()
             .iter()
             .any(|e| e.inclusion_promise.is_some())
     }
-}
 
-/// The signature content (either a message signature or DSSE envelope)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum SignatureContent {
-    /// A simple message signature
-    MessageSignature(MessageSignature),
-    /// A DSSE envelope
-    DsseEnvelope(DsseEnvelope),
-}
-
-/// A simple message signature
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MessageSignature {
-    /// Message digest (optional, for detached signatures)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message_digest: Option<MessageDigest>,
-    /// The signature bytes
-    pub signature: SignatureBytes,
-}
-
-/// Message digest with algorithm
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MessageDigest {
-    /// Hash algorithm
-    pub algorithm: HashAlgorithm,
-    /// Digest bytes
-    pub digest: Sha256Hash,
-}
-
-/// Verification material containing certificate/key and log entries
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VerificationMaterial {
-    /// Certificate, certificate chain, or public key
-    #[serde(flatten)]
-    pub content: VerificationMaterialContent,
-    /// Transparency log entries
-    #[serde(default)]
-    pub tlog_entries: Vec<TransparencyLogEntry>,
-    /// RFC 3161 timestamp verification data
-    #[serde(default, deserialize_with = "deserialize_null_as_default")]
-    pub timestamp_verification_data: TimestampVerificationData,
-}
-
-/// The verification material content type
-///
-/// The field name in JSON determines which variant is used:
-/// - "certificate" -> Certificate variant (v0.3 format)
-/// - "x509CertificateChain" -> X509CertificateChain variant (v0.1/v0.2 format)
-/// - "publicKey" -> PublicKey variant
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum VerificationMaterialContent {
-    /// Single certificate (v0.3 format)
-    Certificate(CertificateContent),
-    /// Certificate chain (v0.1/v0.2 format)
-    X509CertificateChain {
-        /// Chain of certificates
-        certificates: Vec<X509Certificate>,
-    },
-    /// Public key (keyless alternative)
-    PublicKey {
-        /// Public key hint
-        hint: String,
-    },
-}
-
-/// Certificate content for v0.3 bundles
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CertificateContent {
-    /// DER-encoded certificate
-    pub raw_bytes: DerCertificate,
-}
-
-/// X.509 certificate in the chain
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct X509Certificate {
-    /// DER-encoded certificate
-    pub raw_bytes: DerCertificate,
-}
-
-/// A transparency log entry
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TransparencyLogEntry {
-    /// Log index
-    pub log_index: LogIndex,
-    /// Log ID
-    pub log_id: LogId,
-    /// Kind and version of the entry
-    pub kind_version: KindVersion,
-    /// Integrated time (Unix timestamp)
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub integrated_time: String,
-    /// Inclusion promise (Signed Entry Timestamp)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub inclusion_promise: Option<InclusionPromise>,
-    /// Inclusion proof
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub inclusion_proof: Option<InclusionProof>,
-    /// Canonicalized body
-    pub canonicalized_body: CanonicalizedBody,
-}
-
-/// Log identifier
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LogId {
-    /// Key ID (base64 encoded SHA-256 of public key)
-    pub key_id: LogKeyId,
-}
-
-/// Entry kind and version
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct KindVersion {
-    /// Entry kind (e.g., "hashedrekord")
-    pub kind: String,
-    /// Entry version (e.g., "0.0.1")
-    pub version: String,
-}
-
-/// Inclusion promise (Signed Entry Timestamp)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InclusionPromise {
-    /// Signed entry timestamp
-    pub signed_entry_timestamp: SignedTimestamp,
-}
-
-/// Inclusion proof in the Merkle tree
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InclusionProof {
-    /// Index of the entry in the log
-    pub log_index: LogIndex,
-    /// Root hash of the tree
-    pub root_hash: Sha256Hash,
-    /// Tree size at time of proof
-    pub tree_size: String,
-    /// Hashes in the inclusion proof path
-    #[serde(with = "sha256_hash_vec")]
-    pub hashes: Vec<Sha256Hash>,
-    /// Checkpoint (signed tree head) - optional
-    #[serde(default, skip_serializing_if = "CheckpointData::is_empty")]
-    pub checkpoint: CheckpointData,
-}
-
-/// Serde helper for `Vec<Sha256Hash>`
-mod sha256_hash_vec {
-    use super::Sha256Hash;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S>(hashes: &[Sha256Hash], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        // Sha256Hash already implements Serialize (as base64)
-        hashes.serialize(serializer)
+    fn tlog_entries(&self) -> &[TransparencyLogEntry] {
+        self.verification_material
+            .as_ref()
+            .map(|vm| vm.tlog_entries.as_slice())
+            .unwrap_or(&[])
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<Sha256Hash>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Vec::<Sha256Hash>::deserialize(deserializer)
-    }
-}
-
-/// Checkpoint data in inclusion proof
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct CheckpointData {
-    /// Text representation of the checkpoint
-    #[serde(default)]
-    pub envelope: String,
-}
-
-impl CheckpointData {
-    /// Parse the checkpoint text
-    pub fn parse(&self) -> Result<Checkpoint> {
-        Checkpoint::from_text(&self.envelope)
+    fn is_message_signature(&self) -> bool {
+        matches!(self.content, Some(BundleContent::MessageSignature(_)))
     }
 
-    /// Check if checkpoint data is empty
-    pub fn is_empty(&self) -> bool {
-        self.envelope.is_empty()
+    fn is_dsse_envelope(&self) -> bool {
+        matches!(self.content, Some(BundleContent::DsseEnvelope(_)))
     }
-}
 
-/// RFC 3161 timestamp verification data
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct TimestampVerificationData {
-    /// RFC 3161 signed timestamps
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub rfc3161_timestamps: Vec<Rfc3161Timestamp>,
-}
-
-/// An RFC 3161 timestamp
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Rfc3161Timestamp {
-    /// Signed timestamp data (DER-encoded)
-    pub signed_timestamp: TimestampToken,
-}
-
-// Custom Deserialize implementation for Bundle
-impl<'de> Deserialize<'de> for Bundle {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct BundleHelper {
-            media_type: String,
-            verification_material: VerificationMaterial,
-            #[serde(flatten)]
-            content: SignatureContent,
+    fn message_signature(&self) -> Option<&MessageSignature> {
+        match &self.content {
+            Some(BundleContent::MessageSignature(sig)) => Some(sig),
+            _ => None,
         }
-
-        let helper = BundleHelper::deserialize(deserializer)?;
-
-        Ok(Bundle {
-            media_type: helper.media_type,
-            verification_material: helper.verification_material,
-            content: helper.content,
-        })
     }
+
+    fn dsse_envelope(&self) -> Option<&DsseEnvelope> {
+        match &self.content {
+            Some(BundleContent::DsseEnvelope(env)) => Some(env),
+            _ => None,
+        }
+    }
+}
+
+/// Extension trait for TransparencyLogEntry
+pub trait TransparencyLogEntryExt {
+    /// Get the log index as u64
+    fn log_index_u64(&self) -> u64;
+
+    /// Get the log key ID as base64 string
+    fn log_key_id(&self) -> Option<String>;
+
+    /// Get the integrated time as Unix timestamp
+    fn integrated_time_secs(&self) -> i64;
+}
+
+impl TransparencyLogEntryExt for TransparencyLogEntry {
+    fn log_index_u64(&self) -> u64 {
+        self.log_index as u64
+    }
+
+    fn log_key_id(&self) -> Option<String> {
+        use base64::Engine;
+        self.log_id
+            .as_ref()
+            .map(|id| base64::engine::general_purpose::STANDARD.encode(&id.key_id))
+    }
+
+    fn integrated_time_secs(&self) -> i64 {
+        self.integrated_time
+    }
+}
+
+/// Extension trait for InclusionProof
+pub trait InclusionProofExt {
+    /// Get the log index as u64
+    fn log_index_u64(&self) -> u64;
+
+    /// Get the tree size as u64
+    fn tree_size_u64(&self) -> u64;
+
+    /// Parse the checkpoint text
+    fn parse_checkpoint(&self) -> Result<Checkpoint>;
+}
+
+impl InclusionProofExt for InclusionProof {
+    fn log_index_u64(&self) -> u64 {
+        self.log_index as u64
+    }
+
+    fn tree_size_u64(&self) -> u64 {
+        self.tree_size as u64
+    }
+
+    fn parse_checkpoint(&self) -> Result<Checkpoint> {
+        let checkpoint = self
+            .checkpoint
+            .as_ref()
+            .ok_or_else(|| Error::MissingField("checkpoint".to_string()))?;
+        Checkpoint::from_text(&checkpoint.envelope)
+    }
+}
+
+/// Extension trait for DsseEnvelope
+pub trait DsseEnvelopeExt {
+    /// Get the Pre-Authentication Encoding (PAE) bytes
+    ///
+    /// PAE is the string that gets signed in DSSE:
+    /// `DSSEv1 <payload_type_len> <payload_type> <payload_len> <payload>`
+    fn pae(&self) -> Vec<u8>;
+}
+
+impl DsseEnvelopeExt for DsseEnvelope {
+    fn pae(&self) -> Vec<u8> {
+        pae(&self.payload_type, &self.payload)
+    }
+}
+
+/// Compute the Pre-Authentication Encoding (PAE)
+///
+/// Format: `DSSEv1 <len(type)> <type> <len(body)> <body>`
+pub fn pae(payload_type: &str, payload: &[u8]) -> Vec<u8> {
+    let mut result = Vec::new();
+
+    // "DSSEv1" + space
+    result.extend_from_slice(b"DSSEv1 ");
+
+    // payload_type length + space
+    result.extend_from_slice(format!("{} ", payload_type.len()).as_bytes());
+
+    // payload_type + space
+    result.extend_from_slice(payload_type.as_bytes());
+    result.push(b' ');
+
+    // payload length + space
+    result.extend_from_slice(format!("{} ", payload.len()).as_bytes());
+
+    // payload
+    result.extend_from_slice(payload);
+
+    result
 }
 
 #[cfg(test)]
@@ -397,5 +306,13 @@ mod tests {
     #[test]
     fn test_media_type_invalid() {
         assert!(MediaType::from_str("invalid").is_err());
+    }
+
+    #[test]
+    fn test_pae() {
+        // Test vector from DSSE spec
+        let pae_result = pae("application/example", b"hello world");
+        let expected = b"DSSEv1 19 application/example 11 hello world";
+        assert_eq!(pae_result, expected);
     }
 }

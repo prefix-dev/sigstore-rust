@@ -39,6 +39,7 @@
 use sigstore_oidc::{get_ambient_token, get_identity_token, is_ci_environment, IdentityToken};
 use sigstore_rekor::RekorApiVersion;
 use sigstore_sign::{SigningConfig, SigningContext};
+use sigstore_types::BundleExt;
 
 use std::env;
 use std::fs;
@@ -189,15 +190,20 @@ async fn main() {
     println!("  Media Type: {}", bundle.media_type);
 
     // Print tlog entry info
-    if let Some(entry) = bundle.verification_material.tlog_entries.first() {
-        println!(
-            "  Entry Kind: {} v{}",
-            entry.kind_version.kind, entry.kind_version.version
-        );
-        println!("  Log Index: {}", entry.log_index);
-        // For V2, integrated_time is always 0 - RFC3161 timestamps are used instead
-        if let Ok(ts) = entry.integrated_time.parse::<i64>() {
-            if ts == 0 && entry.kind_version.version == "0.0.2" {
+    if let Some(vm) = bundle.verification_material.as_ref() {
+        if let Some(entry) = vm.tlog_entries.first() {
+            if let Some(kv) = entry.kind_version.as_ref() {
+                println!("  Entry Kind: {} v{}", kv.kind, kv.version);
+            }
+            println!("  Log Index: {}", entry.log_index);
+            // For V2, integrated_time is always 0 - RFC3161 timestamps are used instead
+            let ts = entry.integrated_time;
+            let version = entry
+                .kind_version
+                .as_ref()
+                .map(|kv| kv.version.as_str())
+                .unwrap_or("");
+            if ts == 0 && version == "0.0.2" {
                 println!("  Integrated Time: (V2 uses RFC3161 timestamps)");
             } else {
                 use chrono::{DateTime, Utc};
@@ -205,21 +211,22 @@ async fn main() {
                     println!("  Integrated Time: {}", dt);
                 }
             }
-        }
-        // Show if we have inclusion proof (V2) vs just promise (V1)
-        if entry.inclusion_proof.is_some() {
-            println!("  Inclusion Proof: yes (with checkpoint)");
-        } else if entry.inclusion_promise.is_some() {
-            println!("  Inclusion Promise: yes (SET)");
+            // Show if we have inclusion proof (V2) vs just promise (V1)
+            if entry.inclusion_proof.is_some() {
+                println!("  Inclusion Proof: yes (with checkpoint)");
+            } else if entry.inclusion_promise.is_some() {
+                println!("  Inclusion Promise: yes (SET)");
+            }
         }
     }
 
     // Print RFC3161 timestamp info
     let ts_count = bundle
         .verification_material
-        .timestamp_verification_data
-        .rfc3161_timestamps
-        .len();
+        .as_ref()
+        .and_then(|vm| vm.timestamp_verification_data.as_ref())
+        .map(|tvd| tvd.rfc3161_timestamps.len())
+        .unwrap_or(0);
     if ts_count > 0 {
         println!("  RFC3161 Timestamps: {}", ts_count);
     } else {

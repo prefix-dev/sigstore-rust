@@ -3,7 +3,7 @@
 //! These tests use real bundle fixtures from sigstore-rs and sigstore-python.
 
 use sigstore_bundle::{validate_bundle, validate_bundle_with_options, ValidationOptions};
-use sigstore_types::Bundle;
+use sigstore_types::{Bundle, BundleExt};
 
 /// v0.1 bundle with x509CertificateChain (from sigstore-rs)
 const V01_BUNDLE: &str = r#"{
@@ -72,12 +72,11 @@ fn test_parse_v01_bundle() {
     assert_eq!(version, sigstore_types::MediaType::Bundle0_1);
 
     // Check it has x509CertificateChain (not single certificate)
-    match &bundle.verification_material.content {
-        sigstore_types::bundle::VerificationMaterialContent::X509CertificateChain {
-            certificates,
-        } => {
+    let vm = bundle.verification_material.as_ref().unwrap();
+    match &vm.content {
+        Some(sigstore_types::bundle::VerificationMaterialContent::X509CertificateChain(chain)) => {
             assert!(
-                !certificates.is_empty(),
+                !chain.certificates.is_empty(),
                 "Certificate chain should not be empty"
             );
         }
@@ -133,10 +132,11 @@ fn test_parse_v03_bundle() {
     assert_eq!(version, sigstore_types::MediaType::Bundle0_3);
 
     // Check it has single certificate (not chain)
-    match &bundle.verification_material.content {
-        sigstore_types::bundle::VerificationMaterialContent::Certificate(cert) => {
+    let vm = bundle.verification_material.as_ref().unwrap();
+    match &vm.content {
+        Some(sigstore_types::bundle::VerificationMaterialContent::Certificate(cert)) => {
             assert!(
-                !cert.raw_bytes.as_bytes().is_empty(),
+                !cert.raw_bytes.is_empty(),
                 "Certificate should not be empty"
             );
         }
@@ -161,7 +161,8 @@ fn test_v03_bundle_with_timestamp() {
     let bundle = Bundle::from_json(V03_BUNDLE_WITH_TIMESTAMP).expect("Failed to parse bundle");
 
     // Should have timestamp verification data
-    let tvd = &bundle.verification_material.timestamp_verification_data;
+    let vm = bundle.verification_material.as_ref().unwrap();
+    let tvd = vm.timestamp_verification_data.as_ref().unwrap();
     assert!(
         !tvd.rfc3161_timestamps.is_empty(),
         "Should have RFC3161 timestamps"
@@ -193,10 +194,9 @@ fn test_v03_bundle_serialization_roundtrip() {
 
     // Compare
     assert_eq!(bundle.media_type, bundle2.media_type);
-    assert_eq!(
-        bundle.verification_material.tlog_entries.len(),
-        bundle2.verification_material.tlog_entries.len()
-    );
+    let vm1 = bundle.verification_material.as_ref().unwrap();
+    let vm2 = bundle2.verification_material.as_ref().unwrap();
+    assert_eq!(vm1.tlog_entries.len(), vm2.tlog_entries.len());
 }
 
 // ==== Version Comparison Tests ====
@@ -207,15 +207,17 @@ fn test_v01_vs_v03_certificate_format() {
     let v03 = Bundle::from_json(V03_BUNDLE_WITH_PROOF).expect("Failed to parse v0.3");
 
     // v0.1 uses X509CertificateChain
+    let vm01 = v01.verification_material.as_ref().unwrap();
     assert!(matches!(
-        v01.verification_material.content,
-        sigstore_types::bundle::VerificationMaterialContent::X509CertificateChain { .. }
+        &vm01.content,
+        Some(sigstore_types::bundle::VerificationMaterialContent::X509CertificateChain(_))
     ));
 
     // v0.3 uses single Certificate
+    let vm03 = v03.verification_material.as_ref().unwrap();
     assert!(matches!(
-        v03.verification_material.content,
-        sigstore_types::bundle::VerificationMaterialContent::Certificate(_)
+        &vm03.content,
+        Some(sigstore_types::bundle::VerificationMaterialContent::Certificate(_))
     ));
 }
 

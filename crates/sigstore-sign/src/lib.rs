@@ -7,6 +7,7 @@
 //! ```no_run
 //! use sigstore_sign::{SigningContext, SigningConfig};
 //! use sigstore_oidc::IdentityToken;
+//! use sigstore_types::BundleExt;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let context = SigningContext::production();

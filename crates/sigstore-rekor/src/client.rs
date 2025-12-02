@@ -245,14 +245,20 @@ impl RekorClient {
                     root_hash: p.root_hash.to_hex(),
                     tree_size: p.tree_size.parse::<i64>().unwrap_or_default(),
                 }),
-            signed_entry_timestamp: entry_v2.inclusion_promise.map(|p| p.signed_entry_timestamp),
+            // Convert Vec<u8> to SignedTimestamp
+            signed_entry_timestamp: entry_v2
+                .inclusion_promise
+                .map(|p| sigstore_types::SignedTimestamp::from_bytes(&p.signed_entry_timestamp)),
         });
+
+        // Convert Vec<u8> log key ID to hex string (HexLogId expects hex, not base64)
+        let log_id_hex = hex::encode(&entry_v2.log_id.key_id);
 
         Ok(LogEntry {
             uuid: Default::default(), // V2 response doesn't include UUID in body
             body: entry_v2.canonicalized_body,
             integrated_time,
-            log_id: entry_v2.log_id.key_id.into_string().into(),
+            log_id: log_id_hex.into(),
             log_index,
             verification,
         })
@@ -335,14 +341,20 @@ impl RekorClient {
                     root_hash: p.root_hash.to_hex(),
                     tree_size: p.tree_size.parse::<i64>().unwrap_or_default(),
                 }),
-            signed_entry_timestamp: entry_v2.inclusion_promise.map(|p| p.signed_entry_timestamp),
+            // Convert Vec<u8> to SignedTimestamp
+            signed_entry_timestamp: entry_v2
+                .inclusion_promise
+                .map(|p| sigstore_types::SignedTimestamp::from_bytes(&p.signed_entry_timestamp)),
         });
+
+        // Convert Vec<u8> log key ID to hex string (HexLogId expects hex, not base64)
+        let log_id_hex = hex::encode(&entry_v2.log_id.key_id);
 
         Ok(LogEntry {
             uuid: Default::default(), // V2 response doesn't include UUID in body
             body: entry_v2.canonicalized_body,
             integrated_time,
-            log_id: entry_v2.log_id.key_id.into_string().into(),
+            log_id: log_id_hex.into(),
             log_index,
             verification,
         })

@@ -23,6 +23,9 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+# Sigstore protobuf specs
+sigstore_protobuf_specs = { workspace = true }
+
 # Crypto & Certificates
 base64 = { workspace = true }
 x509-cert = { workspace = true }

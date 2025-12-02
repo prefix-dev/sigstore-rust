@@ -10,10 +10,10 @@ use sigstore_oidc::IdentityToken;
 use sigstore_rekor::{
     DsseEntry, DsseEntryV2, HashedRekord, HashedRekordV2, RekorApiVersion, RekorClient,
 };
-use sigstore_trust_root::SigningConfig as TufSigningConfig;
+use sigstore_trust_root::{SigningConfig as TufSigningConfig, SigningConfigExt};
 use sigstore_tsa::TimestampClient;
 use sigstore_types::{
-    Artifact, Bundle, DerCertificate, DsseEnvelope, DsseSignature, KeyId, PayloadBytes, Sha256Hash,
+    Artifact, Bundle, DerCertificate, DsseEnvelope, DsseSignature, PayloadBytes, Sha256Hash,
     SignatureBytes, Subject, TimestampToken,
 };
 
@@ -252,7 +252,7 @@ impl Signer {
                 .with_tlog_entry(tlog_entry.build());
 
         if let Some(ts) = timestamp {
-            bundle = bundle.with_rfc3161_timestamp(ts);
+            bundle = bundle.with_rfc3161_timestamp(ts.as_bytes().to_vec());
         }
 
         Ok(bundle.into_bundle())
@@ -388,14 +388,14 @@ impl Signer {
         let pae = sigstore_types::pae(&payload_type, statement_json.as_bytes());
         let signature = key_pair.sign(&pae)?;
 
-        let dsse_envelope = DsseEnvelope::new(
+        let dsse_envelope = DsseEnvelope {
             payload_type,
-            payload,
-            vec![DsseSignature {
-                sig: signature.clone(),
-                keyid: KeyId::default(),
+            payload: payload.as_bytes().to_vec(),
+            signatures: vec![DsseSignature {
+                sig: signature.as_bytes().to_vec(),
+                keyid: String::new(),
             }],
-        );
+        };
 
         // 5. Create DSSE Rekor entry
         let tlog_entry = self
@@ -414,7 +414,7 @@ impl Signer {
             .with_tlog_entry(tlog_entry.build());
 
         if let Some(ts) = timestamp {
-            bundle = bundle.with_rfc3161_timestamp(ts);
+            bundle = bundle.with_rfc3161_timestamp(ts.as_bytes().to_vec());
         }
 
         Ok(bundle.into_bundle())

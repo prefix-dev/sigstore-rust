@@ -1,7 +1,7 @@
 //! Sigstore trusted root parsing and management
 //!
 //! This crate provides functionality to parse and manage Sigstore trusted root bundles
-//! and signing configuration.
+//! and signing configuration, using the official protobuf specs.
 //!
 //! ## Trusted Root
 //!
@@ -22,13 +22,12 @@
 //! # Features
 //!
 //! - `tuf` - Enable TUF (The Update Framework) support for securely fetching
-//!   trusted roots from Sigstore's TUF repository. This adds async methods
-//!   like [`TrustedRoot::from_tuf()`] and [`TrustedRoot::from_tuf_staging()`].
+//!   trusted roots from Sigstore's TUF repository.
 //!
 //! # Example
 //!
 //! ```no_run
-//! use sigstore_trust_root::{TrustedRoot, SigningConfig};
+//! use sigstore_trust_root::{TrustedRoot, TrustedRootExt, SigningConfig, SigningConfigExt};
 //!
 //! // Load embedded production trusted root
 //! let root = TrustedRoot::production().unwrap();
@@ -45,7 +44,7 @@
 //! With the `tuf` feature enabled:
 //!
 //! ```ignore
-//! use sigstore_trust_root::{TrustedRoot, SigningConfig};
+//! use sigstore_trust_root::{TrustedRoot, TrustedRootExt, SigningConfig, SigningConfigExt};
 //!
 //! // Fetch via TUF protocol (secure, up-to-date)
 //! let root = TrustedRoot::from_tuf().await?;
@@ -60,18 +59,23 @@ pub mod trusted_root;
 pub mod tuf;
 
 pub use error::{Error, Result};
+
+// Re-export protobuf types and extension traits from signing_config
 pub use signing_config::{
-    ServiceConfiguration, ServiceEndpoint, ServiceSelector, ServiceValidityPeriod, SigningConfig,
+    Service, ServiceConfiguration, ServiceExt, ServiceSelector, SigningConfig, SigningConfigExt,
     SIGNING_CONFIG_MEDIA_TYPE, SIGSTORE_PRODUCTION_SIGNING_CONFIG, SIGSTORE_STAGING_SIGNING_CONFIG,
     SUPPORTED_FULCIO_VERSIONS, SUPPORTED_REKOR_VERSIONS, SUPPORTED_TSA_VERSIONS,
 };
+
+// Re-export protobuf types and extension traits from trusted_root
 pub use trusted_root::{
-    CertificateAuthority, CertificateTransparencyLog, TimestampAuthority, TransparencyLog,
-    TrustedRoot, ValidityPeriod, SIGSTORE_PRODUCTION_TRUSTED_ROOT, SIGSTORE_STAGING_TRUSTED_ROOT,
+    CertificateAuthority, DistinguishedName, ProtoHashAlgorithm, ProtoLogId, PublicKey, TimeRange,
+    TransparencyLogInstance, TrustedRoot, TrustedRootExt, X509Certificate, X509CertificateChain,
+    SIGSTORE_PRODUCTION_TRUSTED_ROOT, SIGSTORE_STAGING_TRUSTED_ROOT,
 };
 
 #[cfg(feature = "tuf")]
 pub use tuf::{
-    TufConfig, DEFAULT_TUF_URL, PRODUCTION_TUF_ROOT, SIGNING_CONFIG_TARGET, STAGING_TUF_ROOT,
-    STAGING_TUF_URL, TRUSTED_ROOT_TARGET,
+    TufConfig, TufSigningConfigExt, TufTrustedRootExt, DEFAULT_TUF_URL, PRODUCTION_TUF_ROOT,
+    SIGNING_CONFIG_TARGET, STAGING_TUF_ROOT, STAGING_TUF_URL, TRUSTED_ROOT_TARGET,
 };

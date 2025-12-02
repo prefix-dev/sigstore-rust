@@ -10,9 +10,9 @@ use sigstore_crypto::KeyPair;
 use sigstore_fulcio::FulcioClient;
 use sigstore_oidc::IdentityToken;
 use sigstore_rekor::RekorClient;
-use sigstore_trust_root::{SigningConfig, TrustedRoot};
+use sigstore_trust_root::{SigningConfig, SigningConfigExt, TrustedRoot, TrustedRootExt};
 use sigstore_tsa::TimestampClient;
-use sigstore_types::{Bundle, Sha256Hash, SignatureContent};
+use sigstore_types::{Bundle, BundleExt, Sha256Hash};
 use sigstore_verify::{verify, VerificationPolicy};
 
 use std::env;
@@ -189,7 +189,7 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
         // Timestamp the signature
         let timestamp = tsa_client.timestamp_signature(&signature).await?;
 
-        bundle = bundle.with_rfc3161_timestamp(timestamp);
+        bundle = bundle.with_rfc3161_timestamp(timestamp.as_bytes().to_vec());
     }
 
     let bundle = bundle.into_bundle();
@@ -298,18 +298,18 @@ fn verify_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Extract expected hash from bundle
+        use sigstore_types::BundleContent;
         let expected_hash = match &bundle.content {
-            SignatureContent::MessageSignature(msg_sig) => {
+            Some(BundleContent::MessageSignature(msg_sig)) => {
                 if let Some(digest) = &msg_sig.message_digest {
-                    digest.digest.as_bytes().to_vec()
+                    digest.digest.clone()
                 } else {
                     return Err("Bundle does not contain message digest for verification".into());
                 }
             }
-            SignatureContent::DsseEnvelope(envelope) => {
+            Some(BundleContent::DsseEnvelope(envelope)) => {
                 if envelope.payload_type == "application/vnd.in-toto+json" {
-                    let payload_bytes = envelope.payload.as_bytes();
-                    let payload_str = String::from_utf8(payload_bytes.to_vec())
+                    let payload_str = String::from_utf8(envelope.payload.clone())
                         .map_err(|e| format!("Invalid UTF-8 in payload: {}", e))?;
                     let statement: serde_json::Value = serde_json::from_str(&payload_str)
                         .map_err(|e| format!("Failed to parse statement: {}", e))?;
@@ -336,6 +336,9 @@ fn verify_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     return Err("DSSE envelope does not contain in-toto statement".into());
                 }
+            }
+            None => {
+                return Err("Bundle does not contain any content".into());
             }
         };
 
