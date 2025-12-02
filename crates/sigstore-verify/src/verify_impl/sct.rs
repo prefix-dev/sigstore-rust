@@ -7,7 +7,7 @@
 use crate::error::{Error, Result};
 use const_oid::db::rfc6962::CT_PRECERT_SCTS;
 use sigstore_crypto::{verify_signature, SigningScheme};
-use sigstore_trust_root::TrustedRoot;
+use sigstore_trust_root::{TrustedRoot, TrustedRootExt};
 use sigstore_types::{DerPublicKey, SignatureBytes};
 use tls_codec::{SerializeBytes, TlsByteVecU16, TlsByteVecU24, TlsSerializeBytes, TlsSize};
 use x509_cert::{
@@ -217,12 +217,13 @@ pub fn verify_sct(
 
     // Find the matching CT log key by log ID
     let log_id = &sct.log_id.key_id;
-    let (_, public_key) = ct_keys.iter().find(|(id, _)| id == log_id).ok_or_else(|| {
+    let (_, public_key_bytes) = ct_keys.iter().find(|(id, _)| id == log_id).ok_or_else(|| {
         Error::Verification(format!(
             "SCT log ID {:?} not found in trusted root CT logs",
             hex::encode(log_id)
         ))
     })?;
+    let public_key = DerPublicKey::from_bytes(public_key_bytes);
 
     // Construct the DigitallySigned structure
     let digitally_signed = DigitallySigned::from_embedded_sct(&cert, &sct, issuer_key_hash)?;
@@ -236,7 +237,7 @@ pub fn verify_sct(
     let signature = SignatureBytes::new(sct.signature.signature.clone().into_vec());
 
     // Verify the signature
-    digitally_signed.verify(public_key, sig_alg, &signature)?;
+    digitally_signed.verify(&public_key, sig_alg, &signature)?;
 
     Ok(())
 }

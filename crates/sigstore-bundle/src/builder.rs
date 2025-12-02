@@ -3,12 +3,12 @@
 use sigstore_rekor::entry::LogEntry;
 use sigstore_types::{
     bundle::{
-        CertificateContent, CheckpointData, InclusionPromise, InclusionProof, KindVersion, LogId,
-        MessageSignature, Rfc3161Timestamp, SignatureContent, TimestampVerificationData,
-        TransparencyLogEntry, VerificationMaterial, VerificationMaterialContent,
+        BundleContent, InclusionPromise, InclusionProof, KindVersion, LogId, MessageSignature,
+        ProtoCheckpoint, Rfc3161SignedTimestamp, TimestampVerificationData, TransparencyLogEntry,
+        VerificationMaterial, VerificationMaterialContent, X509Certificate,
     },
-    Bundle, CanonicalizedBody, DerCertificate, DsseEnvelope, LogKeyId, MediaType, Sha256Hash,
-    SignatureBytes, SignedTimestamp, TimestampToken,
+    Bundle, DerCertificate, DsseEnvelope, HashOutput, MediaType, ProtoHashAlgorithm,
+    PublicKeyIdentifier, Sha256Hash, SignatureBytes, SignedTimestamp,
 };
 
 /// Verification material for v0.3 bundles.
@@ -21,6 +21,18 @@ pub enum VerificationMaterialV03 {
     Certificate(DerCertificate),
     /// Public key hint (for pre-existing keys)
     PublicKey { hint: String },
+}
+
+/// Signature content for a bundle
+#[derive(Debug, Clone)]
+pub enum SignatureContent {
+    /// A message signature with digest
+    MessageSignature {
+        signature: SignatureBytes,
+        digest: Sha256Hash,
+    },
+    /// A DSSE envelope
+    DsseEnvelope(DsseEnvelope),
 }
 
 /// A Sigstore bundle in v0.3 format.
@@ -47,8 +59,8 @@ pub struct BundleV03 {
     pub content: SignatureContent,
     /// Transparency log entries
     pub tlog_entries: Vec<TransparencyLogEntry>,
-    /// RFC 3161 timestamps
-    pub rfc3161_timestamps: Vec<Rfc3161Timestamp>,
+    /// RFC 3161 timestamps (raw DER bytes)
+    pub rfc3161_timestamps: Vec<Vec<u8>>,
 }
 
 impl BundleV03 {
@@ -72,13 +84,10 @@ impl BundleV03 {
     ) -> Self {
         Self::new(
             VerificationMaterialV03::Certificate(certificate),
-            SignatureContent::MessageSignature(MessageSignature {
-                message_digest: Some(sigstore_types::bundle::MessageDigest {
-                    algorithm: sigstore_types::HashAlgorithm::Sha2256,
-                    digest: artifact_digest,
-                }),
+            SignatureContent::MessageSignature {
                 signature,
-            }),
+                digest: artifact_digest,
+            },
         )
     }
 
@@ -99,10 +108,8 @@ impl BundleV03 {
     }
 
     /// Add an RFC 3161 timestamp.
-    pub fn with_rfc3161_timestamp(mut self, timestamp: TimestampToken) -> Self {
-        self.rfc3161_timestamps.push(Rfc3161Timestamp {
-            signed_timestamp: timestamp,
-        });
+    pub fn with_rfc3161_timestamp(mut self, timestamp: Vec<u8>) -> Self {
+        self.rfc3161_timestamps.push(timestamp);
         self
     }
 
@@ -110,34 +117,55 @@ impl BundleV03 {
     pub fn into_bundle(self) -> Bundle {
         let verification_content = match self.verification {
             VerificationMaterialV03::Certificate(cert) => {
-                VerificationMaterialContent::Certificate(CertificateContent { raw_bytes: cert })
+                VerificationMaterialContent::Certificate(X509Certificate {
+                    raw_bytes: cert.as_bytes().to_vec(),
+                })
             }
             VerificationMaterialV03::PublicKey { hint } => {
-                VerificationMaterialContent::PublicKey { hint }
+                VerificationMaterialContent::PublicKey(PublicKeyIdentifier { hint })
             }
+        };
+
+        let bundle_content = match self.content {
+            SignatureContent::MessageSignature { signature, digest } => {
+                BundleContent::MessageSignature(MessageSignature {
+                    message_digest: Some(HashOutput {
+                        algorithm: ProtoHashAlgorithm::Sha2256 as i32,
+                        digest: digest.as_bytes().to_vec(),
+                    }),
+                    signature: signature.as_bytes().to_vec(),
+                })
+            }
+            SignatureContent::DsseEnvelope(envelope) => BundleContent::DsseEnvelope(envelope),
         };
 
         Bundle {
             media_type: MediaType::Bundle0_3.as_str().to_string(),
-            verification_material: VerificationMaterial {
-                content: verification_content,
+            verification_material: Some(VerificationMaterial {
+                content: Some(verification_content),
                 tlog_entries: self.tlog_entries,
-                timestamp_verification_data: TimestampVerificationData {
-                    rfc3161_timestamps: self.rfc3161_timestamps,
-                },
-            },
-            content: self.content,
+                timestamp_verification_data: Some(TimestampVerificationData {
+                    rfc3161_timestamps: self
+                        .rfc3161_timestamps
+                        .into_iter()
+                        .map(|ts| Rfc3161SignedTimestamp {
+                            signed_timestamp: ts,
+                        })
+                        .collect(),
+                }),
+            }),
+            content: Some(bundle_content),
         }
     }
 }
 
 /// Helper to create a transparency log entry.
 pub struct TlogEntryBuilder {
-    log_index: u64,
-    log_id: String,
+    log_index: i64,
+    log_id: Vec<u8>,
     kind: String,
     kind_version: String,
-    integrated_time: u64,
+    integrated_time: i64,
     canonicalized_body: Vec<u8>,
     inclusion_promise: Option<InclusionPromise>,
     inclusion_proof: Option<InclusionProof>,
@@ -148,7 +176,7 @@ impl TlogEntryBuilder {
     pub fn new() -> Self {
         Self {
             log_index: 0,
-            log_id: String::new(),
+            log_id: Vec::new(),
             kind: "hashedrekord".to_string(),
             kind_version: "0.0.1".to_string(),
             integrated_time: 0,
@@ -168,18 +196,15 @@ impl TlogEntryBuilder {
     /// * `kind` - The entry kind (e.g., "hashedrekord", "dsse")
     /// * `version` - The entry version (e.g., "0.0.1")
     pub fn from_log_entry(entry: &LogEntry, kind: &str, version: &str) -> Self {
-        // Convert hex log_id to base64 using the type-safe method
-        let log_id_base64 = entry
-            .log_id
-            .to_base64()
-            .unwrap_or_else(|_| entry.log_id.to_string());
+        // Convert hex log_id to raw bytes
+        let log_id_bytes = entry.log_id.decode().unwrap_or_default();
 
         let mut builder = Self {
-            log_index: entry.log_index as u64,
-            log_id: log_id_base64,
+            log_index: entry.log_index,
+            log_id: log_id_bytes,
             kind: kind.to_string(),
             kind_version: version.to_string(),
-            integrated_time: entry.integrated_time as u64,
+            integrated_time: entry.integrated_time,
             canonicalized_body: entry.body.as_bytes().to_vec(),
             inclusion_promise: None,
             inclusion_proof: None,
@@ -189,31 +214,32 @@ impl TlogEntryBuilder {
         if let Some(verification) = &entry.verification {
             if let Some(set) = &verification.signed_entry_timestamp {
                 builder.inclusion_promise = Some(InclusionPromise {
-                    signed_entry_timestamp: set.clone(),
+                    signed_entry_timestamp: set.as_bytes().to_vec(),
                 });
             }
 
             if let Some(proof) = &verification.inclusion_proof {
-                // Rekor V1 API returns hashes as hex, bundle format expects base64
-                // Convert root_hash from hex to Sha256Hash
+                // Rekor V1 API returns hashes as hex, bundle format expects raw bytes
                 let root_hash = Sha256Hash::from_hex(&proof.root_hash)
-                    .unwrap_or_else(|_| Sha256Hash::from_bytes([0u8; 32]));
+                    .map(|h| h.as_bytes().to_vec())
+                    .unwrap_or_default();
 
-                // Convert all proof hashes from hex to Sha256Hash
-                let hashes: Vec<Sha256Hash> = proof
+                // Convert all proof hashes from hex to raw bytes
+                let hashes: Vec<Vec<u8>> = proof
                     .hashes
                     .iter()
                     .filter_map(|h| Sha256Hash::from_hex(h).ok())
+                    .map(|h| h.as_bytes().to_vec())
                     .collect();
 
                 builder.inclusion_proof = Some(InclusionProof {
-                    log_index: proof.log_index.to_string().into(),
+                    log_index: proof.log_index,
                     root_hash,
-                    tree_size: proof.tree_size.to_string(),
+                    tree_size: proof.tree_size,
                     hashes,
-                    checkpoint: CheckpointData {
+                    checkpoint: Some(ProtoCheckpoint {
                         envelope: proof.checkpoint.clone(),
-                    },
+                    }),
                 });
             }
         }
@@ -222,13 +248,13 @@ impl TlogEntryBuilder {
     }
 
     /// Set the log index.
-    pub fn log_index(mut self, index: u64) -> Self {
+    pub fn log_index(mut self, index: i64) -> Self {
         self.log_index = index;
         self
     }
 
     /// Set the integrated time (Unix timestamp).
-    pub fn integrated_time(mut self, time: u64) -> Self {
+    pub fn integrated_time(mut self, time: i64) -> Self {
         self.integrated_time = time;
         self
     }
@@ -236,7 +262,7 @@ impl TlogEntryBuilder {
     /// Set the inclusion promise (Signed Entry Timestamp).
     pub fn inclusion_promise(mut self, signed_entry_timestamp: SignedTimestamp) -> Self {
         self.inclusion_promise = Some(InclusionPromise {
-            signed_entry_timestamp,
+            signed_entry_timestamp: signed_entry_timestamp.as_bytes().to_vec(),
         });
         self
     }
@@ -251,20 +277,20 @@ impl TlogEntryBuilder {
     /// * `checkpoint` - The checkpoint envelope
     pub fn inclusion_proof(
         mut self,
-        log_index: u64,
+        log_index: i64,
         root_hash: Sha256Hash,
-        tree_size: u64,
+        tree_size: i64,
         hashes: Vec<Sha256Hash>,
         checkpoint: String,
     ) -> Self {
         self.inclusion_proof = Some(InclusionProof {
-            log_index: log_index.to_string().into(),
-            root_hash,
-            tree_size: tree_size.to_string(),
-            hashes,
-            checkpoint: CheckpointData {
+            log_index,
+            root_hash: root_hash.as_bytes().to_vec(),
+            tree_size,
+            hashes: hashes.iter().map(|h| h.as_bytes().to_vec()).collect(),
+            checkpoint: Some(ProtoCheckpoint {
                 envelope: checkpoint,
-            },
+            }),
         });
         self
     }
@@ -272,24 +298,18 @@ impl TlogEntryBuilder {
     /// Build the transparency log entry.
     pub fn build(self) -> TransparencyLogEntry {
         TransparencyLogEntry {
-            log_index: self.log_index.to_string().into(),
-            log_id: LogId {
-                key_id: LogKeyId::new(self.log_id),
-            },
-            kind_version: KindVersion {
+            log_index: self.log_index,
+            log_id: Some(LogId {
+                key_id: self.log_id,
+            }),
+            kind_version: Some(KindVersion {
                 kind: self.kind,
                 version: self.kind_version,
-            },
-            // For V2 entries, integrated_time is 0 and should be omitted from JSON
-            // (skip_serializing_if = "String::is_empty" handles this)
-            integrated_time: if self.integrated_time == 0 {
-                String::new()
-            } else {
-                self.integrated_time.to_string()
-            },
+            }),
+            integrated_time: self.integrated_time,
             inclusion_promise: self.inclusion_promise,
             inclusion_proof: self.inclusion_proof,
-            canonicalized_body: CanonicalizedBody::new(self.canonicalized_body),
+            canonicalized_body: self.canonicalized_body,
         }
     }
 }

@@ -1,30 +1,16 @@
 //! Signing configuration for Sigstore instances
 //!
-//! This module provides functionality to parse and manage Sigstore signing configuration
-//! which specifies the service endpoints for signing operations:
-//! - Fulcio CA URLs for certificate issuance
-//! - Rekor transparency log URLs for log entry submission
-//! - TSA URLs for RFC 3161 timestamp requests
-//! - OIDC provider URLs for authentication
-//!
-//! # Example
-//!
-//! ```no_run
-//! use sigstore_trust_root::SigningConfig;
-//!
-//! // Load embedded production signing config
-//! let config = SigningConfig::production().unwrap();
-//!
-//! // Get the best Rekor endpoint (highest available version)
-//! if let Some(rekor) = config.get_rekor_url(None) {
-//!     println!("Rekor URL: {} (v{})", rekor.url, rekor.major_api_version);
-//! }
-//! ```
+//! This module re-exports the official Sigstore protobuf types and provides
+//! extension methods for selecting service endpoints.
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use chrono::{DateTime, TimeZone, Utc};
 
 use crate::{Error, Result};
+
+// Re-export protobuf types
+pub use sigstore_protobuf_specs::dev::sigstore::trustroot::v1::{
+    Service, ServiceConfiguration, ServiceSelector, SigningConfig,
+};
 
 /// Embedded production signing config
 pub const SIGSTORE_PRODUCTION_SIGNING_CONFIG: &str =
@@ -46,140 +32,133 @@ pub const SUPPORTED_FULCIO_VERSIONS: &[u32] = &[1];
 /// Expected media type for signing config v0.2
 pub const SIGNING_CONFIG_MEDIA_TYPE: &str = "application/vnd.dev.sigstore.signingconfig.v0.2+json";
 
-/// Validity period for a service
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ServiceValidityPeriod {
-    /// Start time of validity
-    pub start: DateTime<Utc>,
-    /// End time of validity (optional, None means still valid)
-    #[serde(default)]
-    pub end: Option<DateTime<Utc>>,
+/// Extension trait for Service with helper methods
+pub trait ServiceExt {
+    /// Check if this service is currently valid
+    fn is_valid(&self) -> bool;
+
+    /// Get the validity start time
+    fn valid_from(&self) -> Option<DateTime<Utc>>;
+
+    /// Get the validity end time
+    fn valid_until(&self) -> Option<DateTime<Utc>>;
 }
 
-impl ServiceValidityPeriod {
-    /// Check if this period is currently valid
-    pub fn is_valid(&self) -> bool {
+impl ServiceExt for Service {
+    fn is_valid(&self) -> bool {
         let now = Utc::now();
-        if now < self.start {
-            return false;
-        }
-        if let Some(end) = self.end {
-            if now >= end {
-                return false;
+
+        let Some(valid_for) = &self.valid_for else {
+            return true;
+        };
+
+        // Check start time
+        if let Some(start) = &valid_for.start {
+            if let Some(start_dt) = Utc
+                .timestamp_opt(start.seconds, start.nanos as u32)
+                .single()
+            {
+                if now < start_dt {
+                    return false;
+                }
             }
         }
+
+        // Check end time
+        if let Some(end) = &valid_for.end {
+            if let Some(end_dt) = Utc.timestamp_opt(end.seconds, end.nanos as u32).single() {
+                if now >= end_dt {
+                    return false;
+                }
+            }
+        }
+
         true
     }
-}
 
-/// A service endpoint configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ServiceEndpoint {
-    /// URL of the service
-    pub url: String,
-    /// Major API version supported by this endpoint
-    pub major_api_version: u32,
-    /// Validity period for this endpoint
-    pub valid_for: ServiceValidityPeriod,
-    /// Operator of this service
-    #[serde(default)]
-    pub operator: Option<String>,
-}
+    fn valid_from(&self) -> Option<DateTime<Utc>> {
+        self.valid_for.as_ref().and_then(|vf| {
+            vf.start
+                .as_ref()
+                .and_then(|t| Utc.timestamp_opt(t.seconds, t.nanos as u32).single())
+        })
+    }
 
-impl ServiceEndpoint {
-    /// Check if this endpoint is currently valid
-    pub fn is_valid(&self) -> bool {
-        self.valid_for.is_valid()
+    fn valid_until(&self) -> Option<DateTime<Utc>> {
+        self.valid_for.as_ref().and_then(|vf| {
+            vf.end
+                .as_ref()
+                .and_then(|t| Utc.timestamp_opt(t.seconds, t.nanos as u32).single())
+        })
     }
 }
 
-/// Service selector configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum ServiceSelector {
-    /// Use any available service
-    #[default]
-    Any,
-    /// Use exactly the specified number of services
-    Exact,
-}
+/// Extension trait for SigningConfig with helper methods
+pub trait SigningConfigExt {
+    /// Parse signing config from JSON
+    fn from_json(json: &str) -> Result<SigningConfig>;
 
-/// Service configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ServiceConfiguration {
-    /// How to select services
-    #[serde(default)]
-    pub selector: ServiceSelector,
-    /// Number of services to use (for EXACT selector)
-    #[serde(default)]
-    pub count: Option<u32>,
-}
+    /// Parse signing config from a file
+    fn from_file(path: &str) -> Result<SigningConfig>;
 
-/// Signing configuration for a Sigstore instance
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SigningConfig {
-    /// Media type of this configuration
-    pub media_type: String,
-    /// Fulcio CA URLs
-    #[serde(default)]
-    pub ca_urls: Vec<ServiceEndpoint>,
-    /// OIDC provider URLs
-    #[serde(default)]
-    pub oidc_urls: Vec<ServiceEndpoint>,
-    /// Rekor transparency log URLs
-    #[serde(default)]
-    pub rekor_tlog_urls: Vec<ServiceEndpoint>,
-    /// Timestamp authority URLs
-    #[serde(default)]
-    pub tsa_urls: Vec<ServiceEndpoint>,
-    /// Rekor tlog configuration
-    #[serde(default)]
-    pub rekor_tlog_config: ServiceConfiguration,
-    /// TSA configuration
-    #[serde(default)]
-    pub tsa_config: ServiceConfiguration,
-}
-
-impl SigningConfig {
     /// Load the embedded production signing config
-    pub fn production() -> Result<Self> {
-        Self::from_json(SIGSTORE_PRODUCTION_SIGNING_CONFIG)
-    }
+    fn production() -> Result<SigningConfig>;
 
     /// Load the embedded staging signing config
-    pub fn staging() -> Result<Self> {
-        Self::from_json(SIGSTORE_STAGING_SIGNING_CONFIG)
-    }
+    fn staging() -> Result<SigningConfig>;
 
-    /// Parse signing config from JSON
-    pub fn from_json(json: &str) -> Result<Self> {
+    /// Get valid Rekor endpoints, optionally filtered by version
+    fn get_rekor_urls(&self, force_version: Option<u32>) -> Vec<&Service>;
+
+    /// Get the best Rekor endpoint (highest version available)
+    fn get_rekor_url(&self, force_version: Option<u32>) -> Option<&Service>;
+
+    /// Get valid Fulcio endpoints
+    fn get_fulcio_urls(&self) -> Vec<&Service>;
+
+    /// Get the best Fulcio endpoint
+    fn get_fulcio_url(&self) -> Option<&Service>;
+
+    /// Get valid TSA endpoints
+    fn get_tsa_urls(&self) -> Vec<&Service>;
+
+    /// Get the best TSA endpoint
+    fn get_tsa_url(&self) -> Option<&Service>;
+
+    /// Get valid OIDC provider URLs
+    fn get_oidc_urls(&self) -> Vec<&Service>;
+
+    /// Get the best OIDC provider URL
+    fn get_oidc_url(&self) -> Option<&Service>;
+}
+
+impl SigningConfigExt for SigningConfig {
+    fn from_json(json: &str) -> Result<SigningConfig> {
         let config: SigningConfig = serde_json::from_str(json)?;
 
         // Validate media type
         if config.media_type != SIGNING_CONFIG_MEDIA_TYPE {
-            return Err(Error::UnsupportedMediaType(config.media_type));
+            return Err(Error::UnsupportedMediaType(config.media_type.clone()));
         }
 
         Ok(config)
     }
 
-    /// Parse signing config from a file
-    pub fn from_file(path: &str) -> Result<Self> {
+    fn from_file(path: &str) -> Result<SigningConfig> {
         let json = std::fs::read_to_string(path)
             .map_err(|e| Error::MissingField(format!("Failed to read file {}: {}", path, e)))?;
         Self::from_json(&json)
     }
 
-    /// Get valid Rekor endpoints, optionally filtered by version
-    ///
-    /// If `force_version` is Some, only returns endpoints with that major version.
-    /// Otherwise returns all valid endpoints for supported versions.
-    ///
-    /// Endpoints are sorted by version descending (highest first).
-    pub fn get_rekor_urls(&self, force_version: Option<u32>) -> Vec<&ServiceEndpoint> {
+    fn production() -> Result<SigningConfig> {
+        Self::from_json(SIGSTORE_PRODUCTION_SIGNING_CONFIG)
+    }
+
+    fn staging() -> Result<SigningConfig> {
+        Self::from_json(SIGSTORE_STAGING_SIGNING_CONFIG)
+    }
+
+    fn get_rekor_urls(&self, force_version: Option<u32>) -> Vec<&Service> {
         let mut endpoints: Vec<_> = self
             .rekor_tlog_urls
             .iter()
@@ -205,46 +184,37 @@ impl SigningConfig {
         endpoints
     }
 
-    /// Get the best Rekor endpoint (highest version available)
-    ///
-    /// If `force_version` is Some, returns the first endpoint with that version.
-    pub fn get_rekor_url(&self, force_version: Option<u32>) -> Option<&ServiceEndpoint> {
+    fn get_rekor_url(&self, force_version: Option<u32>) -> Option<&Service> {
         self.get_rekor_urls(force_version).first().copied()
     }
 
-    /// Get valid Fulcio endpoints
-    pub fn get_fulcio_urls(&self) -> Vec<&ServiceEndpoint> {
+    fn get_fulcio_urls(&self) -> Vec<&Service> {
         self.ca_urls
             .iter()
             .filter(|e| e.is_valid() && SUPPORTED_FULCIO_VERSIONS.contains(&e.major_api_version))
             .collect()
     }
 
-    /// Get the best Fulcio endpoint
-    pub fn get_fulcio_url(&self) -> Option<&ServiceEndpoint> {
+    fn get_fulcio_url(&self) -> Option<&Service> {
         self.get_fulcio_urls().first().copied()
     }
 
-    /// Get valid TSA endpoints
-    pub fn get_tsa_urls(&self) -> Vec<&ServiceEndpoint> {
+    fn get_tsa_urls(&self) -> Vec<&Service> {
         self.tsa_urls
             .iter()
             .filter(|e| e.is_valid() && SUPPORTED_TSA_VERSIONS.contains(&e.major_api_version))
             .collect()
     }
 
-    /// Get the best TSA endpoint
-    pub fn get_tsa_url(&self) -> Option<&ServiceEndpoint> {
+    fn get_tsa_url(&self) -> Option<&Service> {
         self.get_tsa_urls().first().copied()
     }
 
-    /// Get valid OIDC provider URLs
-    pub fn get_oidc_urls(&self) -> Vec<&ServiceEndpoint> {
+    fn get_oidc_urls(&self) -> Vec<&Service> {
         self.oidc_urls.iter().filter(|e| e.is_valid()).collect()
     }
 
-    /// Get the best OIDC provider URL
-    pub fn get_oidc_url(&self) -> Option<&ServiceEndpoint> {
+    fn get_oidc_url(&self) -> Option<&Service> {
         self.get_oidc_urls().first().copied()
     }
 }
@@ -291,28 +261,5 @@ mod tests {
         if let Some(rekor) = config.get_rekor_url(Some(2)) {
             assert_eq!(rekor.major_api_version, 2);
         }
-    }
-
-    #[test]
-    fn test_service_validity() {
-        let valid_period = ServiceValidityPeriod {
-            start: DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z")
-                .unwrap()
-                .into(),
-            end: None,
-        };
-        assert!(valid_period.is_valid());
-
-        let expired_period = ServiceValidityPeriod {
-            start: DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z")
-                .unwrap()
-                .into(),
-            end: Some(
-                DateTime::parse_from_rfc3339("2021-01-01T00:00:00Z")
-                    .unwrap()
-                    .into(),
-            ),
-        };
-        assert!(!expired_period.is_valid());
     }
 }

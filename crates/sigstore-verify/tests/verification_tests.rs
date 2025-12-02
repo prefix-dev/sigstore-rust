@@ -2,10 +2,9 @@
 //!
 //! These tests validate the complete verification flow using real bundles.
 
-use sigstore_trust_root::TrustedRoot;
-use sigstore_types::{LogIndex, Sha256Hash};
+use sigstore_trust_root::{TrustedRoot, TrustedRootExt};
+use sigstore_types::{Bundle, BundleContent, BundleExt, Sha256Hash};
 use sigstore_verify::bundle::{validate_bundle, validate_bundle_with_options, ValidationOptions};
-use sigstore_verify::types::Bundle;
 use sigstore_verify::{verify, VerificationPolicy, Verifier};
 use x509_cert::der::Decode;
 
@@ -15,10 +14,10 @@ use x509_cert::der::Decode;
 /// For hashedrekord bundles, extracts from the message digest field.
 fn extract_artifact_digest(bundle: &Bundle) -> Option<Sha256Hash> {
     match &bundle.content {
-        sigstore_verify::types::SignatureContent::DsseEnvelope(env) => {
+        Some(BundleContent::DsseEnvelope(env)) => {
             if env.payload_type == "application/vnd.in-toto+json" {
-                let payload_bytes = env.decode_payload();
-                let payload_str = String::from_utf8(payload_bytes).ok()?;
+                // payload is already Vec<u8> in protobuf types
+                let payload_str = String::from_utf8(env.payload.clone()).ok()?;
                 let statement: serde_json::Value = serde_json::from_str(&payload_str).ok()?;
                 let subject = statement["subject"].as_array()?.first()?;
                 let sha256 = subject["digest"]["sha256"].as_str()?;
@@ -27,10 +26,11 @@ fn extract_artifact_digest(bundle: &Bundle) -> Option<Sha256Hash> {
                 None
             }
         }
-        sigstore_verify::types::SignatureContent::MessageSignature(msg_sig) => msg_sig
+        Some(BundleContent::MessageSignature(msg_sig)) => msg_sig
             .message_digest
             .as_ref()
-            .and_then(|d| Sha256Hash::try_from_slice(d.digest.as_bytes()).ok()),
+            .and_then(|d| Sha256Hash::try_from_slice(&d.digest).ok()),
+        None => None,
     }
 }
 
@@ -86,7 +86,8 @@ fn test_parse_v03_bundle() {
 
     assert!(bundle.media_type.contains("v0.3"));
     assert!(bundle.has_inclusion_proof());
-    assert!(!bundle.verification_material.tlog_entries.is_empty());
+    let vm = bundle.verification_material.as_ref().unwrap();
+    assert!(!vm.tlog_entries.is_empty());
 }
 
 #[test]
@@ -99,7 +100,7 @@ fn test_parse_v03_dsse_bundle() {
 
     // Check DSSE envelope
     match &bundle.content {
-        sigstore_verify::types::SignatureContent::DsseEnvelope(env) => {
+        Some(BundleContent::DsseEnvelope(env)) => {
             assert_eq!(env.payload_type, "application/vnd.in-toto+json");
             assert!(!env.signatures.is_empty());
         }
@@ -289,13 +290,14 @@ fn test_full_verification_flow() {
     );
 
     // Extract tlog entry info
-    let entry = &bundle.verification_material.tlog_entries[0];
-    assert_eq!(entry.kind_version.kind, "dsse");
-    assert_eq!(entry.log_index, LogIndex::new("166143216".to_string()));
+    let vm = bundle.verification_material.as_ref().unwrap();
+    let entry = &vm.tlog_entries[0];
+    assert_eq!(entry.kind_version.as_ref().unwrap().kind, "dsse");
+    assert_eq!(entry.log_index, 166143216_i64);
 
     // Verify inclusion proof
     let proof = entry.inclusion_proof.as_ref().expect("Should have proof");
-    assert_eq!(proof.tree_size, "44238955");
+    assert_eq!(proof.tree_size, 44238955_i64);
     assert_eq!(proof.hashes.len(), 10);
 
     // Run full verification - extract digest from bundle
@@ -330,13 +332,14 @@ fn test_full_verification_flow_happy_path() {
     );
 
     // Extract tlog entry info
-    let entry = &bundle.verification_material.tlog_entries[0];
-    assert_eq!(entry.kind_version.kind, "dsse");
-    assert_eq!(entry.log_index, LogIndex::new("155690850".to_string()));
+    let vm = bundle.verification_material.as_ref().unwrap();
+    let entry = &vm.tlog_entries[0];
+    assert_eq!(entry.kind_version.as_ref().unwrap().kind, "dsse");
+    assert_eq!(entry.log_index, 155690850_i64);
 
     // Verify inclusion proof
     let proof = entry.inclusion_proof.as_ref().expect("Should have proof");
-    assert_eq!(proof.tree_size, "33786589");
+    assert_eq!(proof.tree_size, 33786589_i64);
     assert_eq!(proof.hashes.len(), 11);
 
     // Run full verification - extract digest from bundle
@@ -380,14 +383,15 @@ fn test_verification_with_different_bundle_versions() {
 
 #[test]
 fn test_checkpoint_parsing() {
+    use sigstore_types::InclusionProofExt;
     let bundle = Bundle::from_json(V03_BUNDLE_DSSE).unwrap();
-    let entry = &bundle.verification_material.tlog_entries[0];
+    let vm = bundle.verification_material.as_ref().unwrap();
+    let entry = &vm.tlog_entries[0];
     let proof = entry.inclusion_proof.as_ref().unwrap();
 
     // Parse checkpoint
     let checkpoint = proof
-        .checkpoint
-        .parse()
+        .parse_checkpoint()
         .expect("Failed to parse checkpoint");
 
     assert_eq!(
@@ -410,10 +414,9 @@ fn test_serialization_roundtrip() {
 
     // Verify key properties match
     assert_eq!(bundle.media_type, bundle2.media_type);
-    assert_eq!(
-        bundle.verification_material.tlog_entries.len(),
-        bundle2.verification_material.tlog_entries.len()
-    );
+    let vm1 = bundle.verification_material.as_ref().unwrap();
+    let vm2 = bundle2.verification_material.as_ref().unwrap();
+    assert_eq!(vm1.tlog_entries.len(), vm2.tlog_entries.len());
 }
 
 // ==== Reference Implementation Bundle Tests ====
@@ -427,7 +430,7 @@ fn test_parse_dsse_bundle_from_python() {
 
     // Check DSSE envelope structure
     match &bundle.content {
-        sigstore_verify::types::SignatureContent::DsseEnvelope(env) => {
+        Some(BundleContent::DsseEnvelope(env)) => {
             assert_eq!(env.payload_type, "application/vnd.in-toto+json");
             assert_eq!(env.signatures.len(), 1, "Should have exactly 1 signature");
         }
@@ -435,9 +438,10 @@ fn test_parse_dsse_bundle_from_python() {
     }
 
     // Verify tlog entry exists
-    assert_eq!(bundle.verification_material.tlog_entries.len(), 1);
-    let entry = &bundle.verification_material.tlog_entries[0];
-    assert_eq!(entry.kind_version.kind, "intoto");
+    let vm = bundle.verification_material.as_ref().unwrap();
+    assert_eq!(vm.tlog_entries.len(), 1);
+    let entry = &vm.tlog_entries[0];
+    assert_eq!(entry.kind_version.as_ref().unwrap().kind, "intoto");
 }
 
 #[test]
@@ -447,7 +451,7 @@ fn test_parse_dsse_bundle_with_multiple_signatures() {
 
     // Check DSSE envelope has multiple signatures
     match &bundle.content {
-        sigstore_verify::types::SignatureContent::DsseEnvelope(env) => {
+        Some(BundleContent::DsseEnvelope(env)) => {
             assert_eq!(env.payload_type, "application/vnd.in-toto+json");
             assert_eq!(env.signatures.len(), 2, "Should have exactly 2 signatures");
         }
@@ -479,8 +483,9 @@ fn test_parse_cve_2022_36056_bundle() {
     assert!(bundle.media_type.contains("v0.3"));
 
     // Check it's a hashedrekord type
-    let entry = &bundle.verification_material.tlog_entries[0];
-    assert_eq!(entry.kind_version.kind, "hashedrekord");
+    let vm = bundle.verification_material.as_ref().unwrap();
+    let entry = &vm.tlog_entries[0];
+    assert_eq!(entry.kind_version.as_ref().unwrap().kind, "hashedrekord");
 
     // Bundle structure should be valid
     let result = validate_bundle(&bundle);
@@ -521,7 +526,7 @@ fn test_dsse_bundle_with_2_signatures_should_fail() {
 
     // Verify the bundle has 2 signatures
     match &bundle.content {
-        sigstore_verify::types::SignatureContent::DsseEnvelope(env) => {
+        Some(BundleContent::DsseEnvelope(env)) => {
             assert_eq!(env.signatures.len(), 2, "Bundle should have 2 signatures");
         }
         _ => panic!("Expected DSSE envelope"),
@@ -651,6 +656,7 @@ fn test_bundle_no_cert_v1() {
 /// Test bundle without checkpoint in inclusion proof
 #[test]
 fn test_bundle_no_checkpoint() {
+    use sigstore_types::InclusionProofExt;
     let bundle =
         Bundle::from_json(BUNDLE_NO_CHECKPOINT).expect("Failed to parse bundle_no_checkpoint");
 
@@ -658,9 +664,10 @@ fn test_bundle_no_checkpoint() {
     assert!(bundle.media_type.contains("0.2"));
 
     // Should have a tlog entry
-    assert!(!bundle.verification_material.tlog_entries.is_empty());
+    let vm = bundle.verification_material.as_ref().unwrap();
+    assert!(!vm.tlog_entries.is_empty());
 
-    let entry = &bundle.verification_material.tlog_entries[0];
+    let entry = &vm.tlog_entries[0];
     let proof = entry.inclusion_proof.as_ref();
     assert!(proof.is_some(), "Should have inclusion proof");
 
@@ -668,13 +675,14 @@ fn test_bundle_no_checkpoint() {
     let proof = proof.unwrap();
 
     // Checkpoint should be empty (default value)
+    let checkpoint = proof.checkpoint.as_ref();
     assert!(
-        proof.checkpoint.envelope.is_empty(),
+        checkpoint.is_none() || checkpoint.unwrap().envelope.is_empty(),
         "Checkpoint should be empty when missing from bundle"
     );
 
     // Parsing empty checkpoint should fail
-    let checkpoint_result = proof.checkpoint.parse();
+    let checkpoint_result = proof.parse_checkpoint();
     assert!(
         checkpoint_result.is_err(),
         "Checkpoint parsing should fail when checkpoint is missing"
@@ -691,8 +699,9 @@ fn test_bundle_no_log_entry() {
     assert!(bundle.media_type.contains("0.1"));
 
     // But should have no tlog entries
+    let vm = bundle.verification_material.as_ref().unwrap();
     assert!(
-        bundle.verification_material.tlog_entries.is_empty(),
+        vm.tlog_entries.is_empty(),
         "Bundle should have no tlog entries"
     );
 
@@ -725,9 +734,10 @@ fn test_bundle_v3_no_signed_time() {
     assert!(bundle.media_type.contains("0.3"));
 
     // Should have a tlog entry
-    assert!(!bundle.verification_material.tlog_entries.is_empty());
+    let vm = bundle.verification_material.as_ref().unwrap();
+    assert!(!vm.tlog_entries.is_empty());
 
-    let entry = &bundle.verification_material.tlog_entries[0];
+    let entry = &vm.tlog_entries[0];
 
     // Check that inclusion promise is missing
     assert!(
@@ -786,13 +796,14 @@ fn test_bundle_v3_github_whl() {
     );
 
     // Should have tlog entry
+    let vm = bundle.verification_material.as_ref().unwrap();
     assert!(
-        !bundle.verification_material.tlog_entries.is_empty(),
+        !vm.tlog_entries.is_empty(),
         "Should have transparency log entry"
     );
 
     // Should have inclusion proof
-    let entry = &bundle.verification_material.tlog_entries[0];
+    let entry = &vm.tlog_entries[0];
     assert!(
         entry.inclusion_proof.is_some(),
         "Should have inclusion proof"
@@ -812,17 +823,16 @@ fn test_parse_conda_attestation_bundle() {
 
     // Should be DSSE envelope with in-toto attestation
     match &bundle.content {
-        sigstore_verify::types::SignatureContent::DsseEnvelope(env) => {
+        Some(BundleContent::DsseEnvelope(env)) => {
             assert_eq!(
                 env.payload_type, "application/vnd.in-toto+json",
                 "Should have in-toto payload type"
             );
             assert_eq!(env.signatures.len(), 1, "Should have exactly 1 signature");
 
-            // Decode payload and verify it's a conda attestation
-            let payload_bytes = env.decode_payload();
+            // payload is already Vec<u8> in protobuf types
             let payload_str =
-                String::from_utf8(payload_bytes).expect("Payload should be valid UTF-8");
+                String::from_utf8(env.payload.clone()).expect("Payload should be valid UTF-8");
             let statement: serde_json::Value =
                 serde_json::from_str(&payload_str).expect("Payload should be valid JSON");
 
@@ -856,9 +866,10 @@ fn test_parse_conda_attestation_bundle() {
     assert!(cert.is_some(), "Should have a signing certificate");
 
     // Should have tlog entry
-    assert!(!bundle.verification_material.tlog_entries.is_empty());
-    let entry = &bundle.verification_material.tlog_entries[0];
-    assert_eq!(entry.kind_version.kind, "dsse");
+    let vm = bundle.verification_material.as_ref().unwrap();
+    assert!(!vm.tlog_entries.is_empty());
+    let entry = &vm.tlog_entries[0];
+    assert_eq!(entry.kind_version.as_ref().unwrap().kind, "dsse");
 
     // Should have inclusion proof
     assert!(

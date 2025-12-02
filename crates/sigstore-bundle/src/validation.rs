@@ -4,7 +4,7 @@
 
 use crate::error::{Error, Result};
 use sigstore_merkle::verify_inclusion_proof;
-use sigstore_types::{Bundle, MediaType, Sha256Hash};
+use sigstore_types::{Bundle, BundleExt, InclusionProofExt, MediaType, Sha256Hash};
 
 /// Validation options
 #[derive(Debug, Clone)]
@@ -76,14 +76,24 @@ fn validate_v0_2(bundle: &Bundle, options: &ValidationOptions) -> Result<()> {
 /// Validate a v0.3 bundle
 fn validate_v0_3(bundle: &Bundle, options: &ValidationOptions) -> Result<()> {
     // v0.3 must have single certificate (not chain) or public key
-    match &bundle.verification_material.content {
-        sigstore_types::bundle::VerificationMaterialContent::Certificate(_) => {}
-        sigstore_types::bundle::VerificationMaterialContent::X509CertificateChain { .. } => {
+    let vm = bundle
+        .verification_material
+        .as_ref()
+        .ok_or_else(|| Error::Validation("bundle missing verification material".to_string()))?;
+
+    match &vm.content {
+        Some(sigstore_types::bundle::VerificationMaterialContent::Certificate(_)) => {}
+        Some(sigstore_types::bundle::VerificationMaterialContent::X509CertificateChain(_)) => {
             return Err(Error::Validation(
                 "v0.3 bundle must use single certificate, not chain".to_string(),
             ));
         }
-        sigstore_types::bundle::VerificationMaterialContent::PublicKey { .. } => {}
+        Some(sigstore_types::bundle::VerificationMaterialContent::PublicKey(_)) => {}
+        None => {
+            return Err(Error::Validation(
+                "bundle missing verification material content".to_string(),
+            ));
+        }
     }
 
     // v0.3 requires inclusion proof
@@ -102,24 +112,31 @@ fn validate_v0_3(bundle: &Bundle, options: &ValidationOptions) -> Result<()> {
 
 /// Common validation for all bundle versions
 fn validate_common(bundle: &Bundle, options: &ValidationOptions) -> Result<()> {
+    let vm = bundle
+        .verification_material
+        .as_ref()
+        .ok_or_else(|| Error::Validation("bundle missing verification material".to_string()))?;
+
     // Must have at least one tlog entry
-    if bundle.verification_material.tlog_entries.is_empty() {
+    if vm.tlog_entries.is_empty() {
         return Err(Error::Validation(
             "bundle must have at least one tlog entry".to_string(),
         ));
     }
 
     // Check timestamp if required
-    if options.require_timestamp
-        && bundle
-            .verification_material
+    if options.require_timestamp {
+        let has_timestamps = vm
             .timestamp_verification_data
-            .rfc3161_timestamps
-            .is_empty()
-    {
-        return Err(Error::Validation(
-            "bundle must have timestamp verification data".to_string(),
-        ));
+            .as_ref()
+            .map(|tvd| !tvd.rfc3161_timestamps.is_empty())
+            .unwrap_or(false);
+
+        if !has_timestamps {
+            return Err(Error::Validation(
+                "bundle must have timestamp verification data".to_string(),
+            ));
+        }
     }
 
     Ok(())
@@ -127,29 +144,39 @@ fn validate_common(bundle: &Bundle, options: &ValidationOptions) -> Result<()> {
 
 /// Validate inclusion proofs in the bundle
 fn validate_inclusion_proofs(bundle: &Bundle) -> Result<()> {
-    for entry in &bundle.verification_material.tlog_entries {
+    let vm = match bundle.verification_material.as_ref() {
+        Some(vm) => vm,
+        None => return Ok(()), // No verification material means no proofs to validate
+    };
+
+    for entry in &vm.tlog_entries {
         if let Some(proof) = &entry.inclusion_proof {
             // Parse the checkpoint to get the expected root
             let checkpoint = proof
-                .checkpoint
-                .parse()
+                .parse_checkpoint()
                 .map_err(|e| Error::Validation(format!("failed to parse checkpoint: {}", e)))?;
 
             // Get the leaf (canonicalized body) bytes
-            let leaf_data = entry.canonicalized_body.as_bytes();
+            let leaf_data = &entry.canonicalized_body;
 
-            // Get proof hashes (already decoded as Vec<Sha256Hash>)
-            let proof_hashes: &[Sha256Hash] = &proof.hashes;
+            // Get proof hashes (now Vec<Vec<u8>>)
+            let proof_hashes: Vec<Sha256Hash> = proof
+                .hashes
+                .iter()
+                .filter_map(|h| {
+                    if h.len() == 32 {
+                        let mut arr = [0u8; 32];
+                        arr.copy_from_slice(h);
+                        Some(Sha256Hash::from_bytes(arr))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
 
-            // Parse indices
-            let leaf_index: u64 = proof
-                .log_index
-                .as_u64()
-                .map_err(|_| Error::Validation("invalid log_index in proof".to_string()))?;
-            let tree_size: u64 = proof
-                .tree_size
-                .parse()
-                .map_err(|_| Error::Validation("invalid tree_size in proof".to_string()))?;
+            // Get indices (now i64)
+            let leaf_index = proof.log_index_u64();
+            let tree_size = proof.tree_size_u64();
 
             // Get expected root from checkpoint (already a Sha256Hash)
             let expected_root = checkpoint.root_hash;
@@ -162,7 +189,7 @@ fn validate_inclusion_proofs(bundle: &Bundle) -> Result<()> {
                 &leaf_hash,
                 leaf_index,
                 tree_size,
-                proof_hashes,
+                &proof_hashes,
                 &expected_root,
             )
             .map_err(|e| {

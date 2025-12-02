@@ -28,8 +28,8 @@
 //! gh attestation verify <artifact> --owner <owner>
 //! ```
 
-use sigstore_trust_root::TrustedRoot;
-use sigstore_types::Bundle;
+use sigstore_trust_root::{TrustedRoot, TrustedRootExt};
+use sigstore_types::{Bundle, BundleExt};
 use sigstore_verify::{verify, VerificationPolicy};
 
 use std::env;

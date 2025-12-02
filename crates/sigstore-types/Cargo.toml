@@ -16,5 +16,8 @@ thiserror = { workspace = true }
 chrono = { workspace = true }
 pem = { workspace = true }
 
+# Sigstore protobuf specs
+sigstore_protobuf_specs = { workspace = true }
+
 [dev-dependencies]
 hex = { workspace = true }

@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use sigstore_trust_root::{TrustedRoot, SigningConfig};
+//! use sigstore_trust_root::{TrustedRoot, TrustedRootExt, SigningConfig, SigningConfigExt, TufTrustedRootExt, TufSigningConfigExt};
 //!
 //! # async fn example() -> Result<(), sigstore_trust_root::Error> {
 //! // Fetch trusted root via TUF from production Sigstore
@@ -27,7 +27,7 @@ use std::path::PathBuf;
 use tough::{HttpTransport, IntoVec, RepositoryLoader, TargetName};
 use url::Url;
 
-use crate::{Error, Result, SigningConfig, TrustedRoot};
+use crate::{Error, Result, SigningConfig, SigningConfigExt, TrustedRoot, TrustedRootExt};
 
 /// Default Sigstore production TUF repository URL
 pub const DEFAULT_TUF_URL: &str = "https://tuf-repo-cdn.sigstore.dev";
@@ -268,7 +268,22 @@ impl TufClient {
     }
 }
 
-impl TrustedRoot {
+/// Extension trait for TrustedRoot with TUF fetching methods
+pub trait TufTrustedRootExt {
+    /// Fetch the trusted root from Sigstore's production TUF repository
+    fn from_tuf() -> impl std::future::Future<Output = Result<TrustedRoot>> + Send;
+
+    /// Fetch the trusted root from Sigstore's staging TUF repository
+    fn from_tuf_staging() -> impl std::future::Future<Output = Result<TrustedRoot>> + Send;
+
+    /// Fetch the trusted root from a custom TUF repository
+    fn from_tuf_with_config(
+        config: TufConfig,
+        tuf_root: &'static [u8],
+    ) -> impl std::future::Future<Output = Result<TrustedRoot>> + Send;
+}
+
+impl TufTrustedRootExt for TrustedRoot {
     /// Fetch the trusted root from Sigstore's production TUF repository
     ///
     /// This securely fetches the `trusted_root.json` using the TUF protocol,
@@ -277,7 +292,7 @@ impl TrustedRoot {
     /// # Example
     ///
     /// ```no_run
-    /// use sigstore_trust_root::TrustedRoot;
+    /// use sigstore_trust_root::{TrustedRoot, TufTrustedRootExt};
     ///
     /// # async fn example() -> Result<(), sigstore_trust_root::Error> {
     /// let root = TrustedRoot::from_tuf().await?;
@@ -285,23 +300,23 @@ impl TrustedRoot {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn from_tuf() -> Result<Self> {
+    async fn from_tuf() -> Result<TrustedRoot> {
         let client = TufClient::production();
         let bytes = client.fetch_target(TRUSTED_ROOT_TARGET).await?;
         let json = String::from_utf8(bytes)
             .map_err(|e| Error::Tuf(format!("Invalid UTF-8 in {}: {}", TRUSTED_ROOT_TARGET, e)))?;
-        Self::from_json(&json)
+        TrustedRoot::from_json(&json)
     }
 
     /// Fetch the trusted root from Sigstore's staging TUF repository
     ///
     /// This is useful for testing against the staging Sigstore infrastructure.
-    pub async fn from_tuf_staging() -> Result<Self> {
+    async fn from_tuf_staging() -> Result<TrustedRoot> {
         let client = TufClient::staging();
         let bytes = client.fetch_target(TRUSTED_ROOT_TARGET).await?;
         let json = String::from_utf8(bytes)
             .map_err(|e| Error::Tuf(format!("Invalid UTF-8 in {}: {}", TRUSTED_ROOT_TARGET, e)))?;
-        Self::from_json(&json)
+        TrustedRoot::from_json(&json)
     }
 
     /// Fetch the trusted root from a custom TUF repository
@@ -310,16 +325,34 @@ impl TrustedRoot {
     ///
     /// * `config` - TUF client configuration
     /// * `tuf_root` - The TUF root.json to use for bootstrapping trust
-    pub async fn from_tuf_with_config(config: TufConfig, tuf_root: &'static [u8]) -> Result<Self> {
+    async fn from_tuf_with_config(
+        config: TufConfig,
+        tuf_root: &'static [u8],
+    ) -> Result<TrustedRoot> {
         let client = TufClient::new(config, tuf_root);
         let bytes = client.fetch_target(TRUSTED_ROOT_TARGET).await?;
         let json = String::from_utf8(bytes)
             .map_err(|e| Error::Tuf(format!("Invalid UTF-8 in {}: {}", TRUSTED_ROOT_TARGET, e)))?;
-        Self::from_json(&json)
+        TrustedRoot::from_json(&json)
     }
 }
 
-impl SigningConfig {
+/// Extension trait for SigningConfig with TUF fetching methods
+pub trait TufSigningConfigExt {
+    /// Fetch the signing config from Sigstore's production TUF repository
+    fn from_tuf() -> impl std::future::Future<Output = Result<SigningConfig>> + Send;
+
+    /// Fetch the signing config from Sigstore's staging TUF repository
+    fn from_tuf_staging() -> impl std::future::Future<Output = Result<SigningConfig>> + Send;
+
+    /// Fetch the signing config from a custom TUF repository
+    fn from_tuf_with_config(
+        config: TufConfig,
+        tuf_root: &'static [u8],
+    ) -> impl std::future::Future<Output = Result<SigningConfig>> + Send;
+}
+
+impl TufSigningConfigExt for SigningConfig {
     /// Fetch the signing configuration from Sigstore's production TUF repository
     ///
     /// This securely fetches the `signing_config.v0.2.json` using the TUF protocol,
@@ -334,7 +367,7 @@ impl SigningConfig {
     /// # Example
     ///
     /// ```no_run
-    /// use sigstore_trust_root::SigningConfig;
+    /// use sigstore_trust_root::{SigningConfig, SigningConfigExt, TufSigningConfigExt};
     ///
     /// # async fn example() -> Result<(), sigstore_trust_root::Error> {
     /// let config = SigningConfig::from_tuf().await?;
@@ -344,26 +377,26 @@ impl SigningConfig {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn from_tuf() -> Result<Self> {
+    async fn from_tuf() -> Result<SigningConfig> {
         let client = TufClient::production();
         let bytes = client.fetch_target(SIGNING_CONFIG_TARGET).await?;
         let json = String::from_utf8(bytes).map_err(|e| {
             Error::Tuf(format!("Invalid UTF-8 in {}: {}", SIGNING_CONFIG_TARGET, e))
         })?;
-        Self::from_json(&json)
+        SigningConfig::from_json(&json)
     }
 
     /// Fetch the signing configuration from Sigstore's staging TUF repository
     ///
     /// This is useful for testing against the staging Sigstore infrastructure,
     /// which may have newer API versions (e.g., Rekor V2) available.
-    pub async fn from_tuf_staging() -> Result<Self> {
+    async fn from_tuf_staging() -> Result<SigningConfig> {
         let client = TufClient::staging();
         let bytes = client.fetch_target(SIGNING_CONFIG_TARGET).await?;
         let json = String::from_utf8(bytes).map_err(|e| {
             Error::Tuf(format!("Invalid UTF-8 in {}: {}", SIGNING_CONFIG_TARGET, e))
         })?;
-        Self::from_json(&json)
+        SigningConfig::from_json(&json)
     }
 
     /// Fetch the signing configuration from a custom TUF repository
@@ -372,13 +405,16 @@ impl SigningConfig {
     ///
     /// * `config` - TUF client configuration
     /// * `tuf_root` - The TUF root.json to use for bootstrapping trust
-    pub async fn from_tuf_with_config(config: TufConfig, tuf_root: &'static [u8]) -> Result<Self> {
+    async fn from_tuf_with_config(
+        config: TufConfig,
+        tuf_root: &'static [u8],
+    ) -> Result<SigningConfig> {
         let client = TufClient::new(config, tuf_root);
         let bytes = client.fetch_target(SIGNING_CONFIG_TARGET).await?;
         let json = String::from_utf8(bytes).map_err(|e| {
             Error::Tuf(format!("Invalid UTF-8 in {}: {}", SIGNING_CONFIG_TARGET, e))
         })?;
-        Self::from_json(&json)
+        SigningConfig::from_json(&json)
     }
 }
 

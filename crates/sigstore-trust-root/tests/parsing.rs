@@ -1,4 +1,4 @@
-use sigstore_trust_root::TrustedRoot;
+use sigstore_trust_root::{TrustedRoot, TrustedRootExt};
 use std::path::PathBuf;
 
 #[test]

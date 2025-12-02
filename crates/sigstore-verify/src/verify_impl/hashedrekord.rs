@@ -4,18 +4,27 @@
 //! artifact hash verification and certificate/signature matching.
 
 use crate::error::{Error, Result};
+use base64::Engine;
 use sigstore_rekor::body::RekorEntryBody;
-use sigstore_types::bundle::VerificationMaterialContent;
-use sigstore_types::{
-    Artifact, Bundle, Sha256Hash, SignatureBytes, SignatureContent, TransparencyLogEntry,
-};
+use sigstore_types::bundle::{BundleContent, VerificationMaterialContent};
+use sigstore_types::{Artifact, Bundle, Sha256Hash, SignatureBytes, TransparencyLogEntry};
 use x509_cert::der::Decode;
 use x509_cert::Certificate;
 
 /// Verify artifact hash matches what's in Rekor (for hashedrekord entries)
 pub fn verify_hashedrekord_entries(bundle: &Bundle, artifact: &Artifact<'_>) -> Result<()> {
-    for entry in &bundle.verification_material.tlog_entries {
-        if entry.kind_version.kind == "hashedrekord" {
+    let vm = match bundle.verification_material.as_ref() {
+        Some(vm) => vm,
+        None => return Ok(()),
+    };
+
+    for entry in &vm.tlog_entries {
+        let kind = entry
+            .kind_version
+            .as_ref()
+            .map(|kv| kv.kind.as_str())
+            .unwrap_or("");
+        if kind == "hashedrekord" {
             verify_hashedrekord_entry(entry, bundle, artifact)?;
         }
     }
@@ -28,13 +37,14 @@ fn verify_hashedrekord_entry(
     bundle: &Bundle,
     artifact: &Artifact<'_>,
 ) -> Result<()> {
+    let kv = entry.kind_version.as_ref().ok_or_else(|| {
+        Error::Verification("hashedrekord entry missing kind_version".to_string())
+    })?;
+
     // Parse the Rekor entry body (convert canonicalized body to base64 string)
-    let body = RekorEntryBody::from_base64_json(
-        &entry.canonicalized_body.to_base64(),
-        &entry.kind_version.kind,
-        &entry.kind_version.version,
-    )
-    .map_err(|e| Error::Verification(format!("failed to parse Rekor body: {}", e)))?;
+    let body_base64 = base64::engine::general_purpose::STANDARD.encode(&entry.canonicalized_body);
+    let body = RekorEntryBody::from_base64_json(&body_base64, &kv.kind, &kv.version)
+        .map_err(|e| Error::Verification(format!("failed to parse Rekor body: {}", e)))?;
 
     // Compute artifact hash from artifact (bytes or pre-computed digest)
     let artifact_hash = compute_artifact_digest(artifact);
@@ -58,7 +68,7 @@ fn verify_hashedrekord_entry(
         _ => {
             return Err(Error::Verification(format!(
                 "expected HashedRekord body, got different type for version {}",
-                entry.kind_version.version
+                kv.version
             )));
         }
     };
@@ -135,20 +145,22 @@ fn validate_certificate_match(
 
     if let Some(rekor_cert_der) = rekor_cert_der_opt {
         // Get the certificate from the bundle
-        let bundle_cert = match &bundle.verification_material.content {
-            VerificationMaterialContent::X509CertificateChain { certificates } => {
-                certificates.first().map(|c| &c.raw_bytes)
+        let vm = match bundle.verification_material.as_ref() {
+            Some(vm) => vm,
+            None => return Ok(()),
+        };
+
+        let bundle_cert: Option<&Vec<u8>> = match &vm.content {
+            Some(VerificationMaterialContent::X509CertificateChain(chain)) => {
+                chain.certificates.first().map(|c| &c.raw_bytes)
             }
-            VerificationMaterialContent::Certificate(cert) => Some(&cert.raw_bytes),
+            Some(VerificationMaterialContent::Certificate(cert)) => Some(&cert.raw_bytes),
             _ => None,
         };
 
         if let Some(bundle_cert) = bundle_cert {
-            // Bundle certificate is DerCertificate, get raw bytes
-            let bundle_cert_der = bundle_cert.as_bytes();
-
             // Compare certificates
-            if bundle_cert_der != rekor_cert_der {
+            if bundle_cert != &rekor_cert_der {
                 return Err(Error::Verification(
                     "certificate in bundle does not match certificate in Rekor entry".to_string(),
                 ));
@@ -180,11 +192,9 @@ fn validate_signature_match(
 
     if let Some(rekor_sig) = rekor_sig {
         // Get the signature from the bundle (only for MessageSignature, not DSSE)
-        if let SignatureContent::MessageSignature(sig) = &bundle.content {
-            let bundle_sig = &sig.signature;
-
-            // Compare signatures (both are SignatureBytes)
-            if bundle_sig != rekor_sig {
+        if let Some(BundleContent::MessageSignature(sig)) = &bundle.content {
+            // bundle signature is Vec<u8>, rekor_sig is SignatureBytes
+            if sig.signature != rekor_sig.as_bytes() {
                 return Err(Error::Verification(
                     "signature in bundle does not match signature in Rekor entry".to_string(),
                 ));
@@ -215,7 +225,7 @@ fn verify_signature_cryptographically(
     artifact: &Artifact<'_>,
 ) -> Result<()> {
     // Only verify for MessageSignature (not DSSE envelopes)
-    if let SignatureContent::MessageSignature(_) = &bundle.content {
+    if let Some(BundleContent::MessageSignature(_)) = &bundle.content {
         // Extract the signature from Rekor
         let signature_bytes = match body {
             RekorEntryBody::HashedRekordV001(rekord) => {
@@ -234,20 +244,22 @@ fn verify_signature_cryptographically(
         };
 
         // Get the certificate from the bundle
-        let bundle_cert = match &bundle.verification_material.content {
-            VerificationMaterialContent::X509CertificateChain { certificates } => {
-                certificates.first().map(|c| &c.raw_bytes)
+        let vm = match bundle.verification_material.as_ref() {
+            Some(vm) => vm,
+            None => return Ok(()),
+        };
+
+        let bundle_cert: Option<&Vec<u8>> = match &vm.content {
+            Some(VerificationMaterialContent::X509CertificateChain(chain)) => {
+                chain.certificates.first().map(|c| &c.raw_bytes)
             }
-            VerificationMaterialContent::Certificate(cert) => Some(&cert.raw_bytes),
+            Some(VerificationMaterialContent::Certificate(cert)) => Some(&cert.raw_bytes),
             _ => None,
         };
 
         if let Some(bundle_cert) = bundle_cert {
-            // Get certificate DER bytes directly
-            let cert_der = bundle_cert.as_bytes();
-
             // Parse certificate to extract public key and algorithm
-            let cert_info = sigstore_crypto::x509::parse_certificate_info(cert_der)?;
+            let cert_info = sigstore_crypto::x509::parse_certificate_info(bundle_cert)?;
 
             match artifact {
                 Artifact::Bytes(bytes) => {
@@ -306,21 +318,29 @@ fn verify_signature_cryptographically(
 
 /// Validate that integrated time is within certificate validity period
 fn validate_integrated_time(entry: &TransparencyLogEntry, bundle: &Bundle) -> Result<()> {
-    let bundle_cert = match &bundle.verification_material.content {
-        VerificationMaterialContent::X509CertificateChain { certificates } => {
-            certificates.first().map(|c| &c.raw_bytes)
+    let vm = match bundle.verification_material.as_ref() {
+        Some(vm) => vm,
+        None => return Ok(()),
+    };
+
+    let bundle_cert: Option<&Vec<u8>> = match &vm.content {
+        Some(VerificationMaterialContent::X509CertificateChain(chain)) => {
+            chain.certificates.first().map(|c| &c.raw_bytes)
         }
-        VerificationMaterialContent::Certificate(cert) => Some(&cert.raw_bytes),
+        Some(VerificationMaterialContent::Certificate(cert)) => Some(&cert.raw_bytes),
         _ => None,
     };
 
     if let Some(bundle_cert) = bundle_cert {
-        let bundle_cert_der = bundle_cert.as_bytes();
+        let kv = match entry.kind_version.as_ref() {
+            Some(kv) => kv,
+            None => return Ok(()),
+        };
 
         // Only validate integrated time for hashedrekord 0.0.1
-        // For 0.0.2 (Rekor v2), integrated_time is not present
-        if entry.kind_version.version == "0.0.1" && !entry.integrated_time.is_empty() {
-            let cert = Certificate::from_der(bundle_cert_der).map_err(|e| {
+        // For 0.0.2 (Rekor v2), integrated_time is 0
+        if kv.version == "0.0.1" && entry.integrated_time > 0 {
+            let cert = Certificate::from_der(bundle_cert).map_err(|e| {
                 Error::Verification(format!(
                     "failed to parse certificate for time validation: {}",
                     e
@@ -345,9 +365,7 @@ fn validate_integrated_time(entry: &TransparencyLogEntry, bundle: &Bundle) -> Re
                 })?
                 .as_secs() as i64;
 
-            let integrated_time = entry.integrated_time.parse::<i64>().map_err(|e| {
-                Error::Verification(format!("failed to parse integrated time: {}", e))
-            })?;
+            let integrated_time = entry.integrated_time;
 
             if integrated_time < not_before || integrated_time > not_after {
                 return Err(Error::Verification(format!(

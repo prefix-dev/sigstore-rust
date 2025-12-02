@@ -2,10 +2,30 @@
 
 use serde::{Deserialize, Serialize};
 use sigstore_types::{
-    CanonicalizedBody, CheckpointData, DerCertificate, EntryUuid, HashAlgorithm, HexLogId,
-    InclusionPromise, KindVersion, LogId, PemContent, Sha256Hash, SignatureBytes, SignedTimestamp,
+    CanonicalizedBody, DerCertificate, EntryUuid, HashAlgorithm, HexLogId, KindVersion, LogId,
+    PemContent, Sha256Hash, SignatureBytes, SignedTimestamp,
 };
 use std::collections::HashMap;
+
+/// Inclusion promise (SET) from Rekor response
+/// Re-exported from protobuf for convenience
+pub use sigstore_types::InclusionPromise;
+
+/// Checkpoint data in Rekor V2 inclusion proof
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckpointData {
+    /// Text representation of the checkpoint
+    #[serde(default)]
+    pub envelope: String,
+}
+
+impl CheckpointData {
+    /// Check if checkpoint data is empty
+    pub fn is_empty(&self) -> bool {
+        self.envelope.is_empty()
+    }
+}
 
 /// Rekor API version
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
