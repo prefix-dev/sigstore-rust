@@ -7,8 +7,8 @@ use sigstore_types::{
         MessageSignature, Rfc3161Timestamp, SignatureContent, TimestampVerificationData,
         TransparencyLogEntry, VerificationMaterial, VerificationMaterialContent,
     },
-    Bundle, CanonicalizedBody, DerCertificate, DsseEnvelope, LogKeyId, MediaType, Sha256Hash,
-    SignatureBytes, SignedTimestamp, TimestampToken,
+    Bundle, CanonicalizedBody, DerCertificate, DsseEnvelope, LogIndex, LogKeyId, MediaType,
+    Sha256Hash, SignatureBytes, SignedTimestamp, TimestampToken,
 };
 
 /// Verification material for v0.3 bundles.
@@ -207,9 +207,9 @@ impl TlogEntryBuilder {
                     .collect();
 
                 builder.inclusion_proof = Some(InclusionProof {
-                    log_index: proof.log_index.to_string().into(),
+                    log_index: LogIndex::new(proof.log_index),
                     root_hash,
-                    tree_size: proof.tree_size.to_string(),
+                    tree_size: proof.tree_size,
                     hashes,
                     checkpoint: CheckpointData {
                         envelope: proof.checkpoint.clone(),
@@ -258,9 +258,9 @@ impl TlogEntryBuilder {
         checkpoint: String,
     ) -> Self {
         self.inclusion_proof = Some(InclusionProof {
-            log_index: log_index.to_string().into(),
+            log_index: LogIndex::from(log_index),
             root_hash,
-            tree_size: tree_size.to_string(),
+            tree_size: tree_size as i64,
             hashes,
             checkpoint: CheckpointData {
                 envelope: checkpoint,
@@ -272,7 +272,7 @@ impl TlogEntryBuilder {
     /// Build the transparency log entry.
     pub fn build(self) -> TransparencyLogEntry {
         TransparencyLogEntry {
-            log_index: self.log_index.to_string().into(),
+            log_index: LogIndex::from(self.log_index),
             log_id: LogId {
                 key_id: LogKeyId::new(self.log_id),
             },
@@ -280,13 +280,7 @@ impl TlogEntryBuilder {
                 kind: self.kind,
                 version: self.kind_version,
             },
-            // For V2 entries, integrated_time is 0 and should be omitted from JSON
-            // (skip_serializing_if = "String::is_empty" handles this)
-            integrated_time: if self.integrated_time == 0 {
-                String::new()
-            } else {
-                self.integrated_time.to_string()
-            },
+            integrated_time: self.integrated_time as i64,
             inclusion_promise: self.inclusion_promise,
             inclusion_proof: self.inclusion_proof,
             canonicalized_body: CanonicalizedBody::new(self.canonicalized_body),

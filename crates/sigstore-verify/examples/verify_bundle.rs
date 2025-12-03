@@ -12,9 +12,25 @@
 //! Verify with identity requirements:
 //! ```sh
 //! cargo run -p sigstore-verify --example verify_bundle -- \
-//!     --identity "https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.0.0" \
-//!     --issuer "https://token.actions.githubusercontent.com" \
+//!     --certificate-identity "https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.0.0" \
+//!     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
 //!     artifact.txt artifact.sigstore.json
+//! ```
+//!
+//! Verify with regex matching (cosign-compatible):
+//! ```sh
+//! cargo run -p sigstore-verify --example verify_bundle -- \
+//!     --certificate-identity-regexp ".*" \
+//!     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+//!     artifact.txt artifact.sigstore.json
+//! ```
+//!
+//! Verify using digest instead of file:
+//! ```sh
+//! cargo run -p sigstore-verify --example verify_bundle -- \
+//!     --certificate-identity-regexp ".*" \
+//!     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+//!     sha256:abc123... bundle.sigstore.json
 //! ```
 //!
 //! # Getting a bundle from GitHub
@@ -28,8 +44,9 @@
 //! gh attestation verify <artifact> --owner <owner>
 //! ```
 
+use regex::Regex;
 use sigstore_trust_root::TrustedRoot;
-use sigstore_types::Bundle;
+use sigstore_types::{Artifact, Bundle, Sha256Hash};
 use sigstore_verify::{verify, VerificationPolicy};
 
 use std::env;
@@ -41,24 +58,33 @@ fn main() {
 
     // Parse arguments
     let mut identity: Option<String> = None;
+    let mut identity_regexp: Option<String> = None;
     let mut issuer: Option<String> = None;
     let mut positional: Vec<String> = Vec::new();
 
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "--identity" | "-i" => {
+            "--identity" | "-i" | "--certificate-identity" => {
                 i += 1;
                 if i >= args.len() {
-                    eprintln!("Error: --identity requires a value");
+                    eprintln!("Error: --certificate-identity requires a value");
                     process::exit(1);
                 }
                 identity = Some(args[i].clone());
             }
-            "--issuer" | "-o" => {
+            "--certificate-identity-regexp" => {
                 i += 1;
                 if i >= args.len() {
-                    eprintln!("Error: --issuer requires a value");
+                    eprintln!("Error: --certificate-identity-regexp requires a value");
+                    process::exit(1);
+                }
+                identity_regexp = Some(args[i].clone());
+            }
+            "--issuer" | "-o" | "--certificate-oidc-issuer" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --certificate-oidc-issuer requires a value");
                     process::exit(1);
                 }
                 issuer = Some(args[i].clone());
@@ -80,22 +106,16 @@ fn main() {
     }
 
     if positional.len() != 2 {
-        eprintln!("Error: Expected exactly 2 positional arguments (artifact and bundle)");
+        eprintln!("Error: Expected exactly 2 positional arguments (artifact/digest and bundle)");
         print_usage(&args[0]);
         process::exit(1);
     }
 
-    let artifact_path = &positional[0];
+    let artifact_or_digest = &positional[0];
     let bundle_path = &positional[1];
 
-    // Read artifact
-    let artifact = match fs::read(artifact_path) {
-        Ok(data) => data,
-        Err(e) => {
-            eprintln!("Error reading artifact '{}': {}", artifact_path, e);
-            process::exit(1);
-        }
-    };
+    // Check if artifact is a digest (sha256:...)
+    let is_digest = artifact_or_digest.starts_with("sha256:");
 
     // Read bundle
     let bundle_json = match fs::read_to_string(bundle_path) {
@@ -135,7 +155,11 @@ fn main() {
 
     // Print bundle info
     println!("Verifying bundle...");
-    println!("  Artifact: {}", artifact_path);
+    if is_digest {
+        println!("  Digest: {}", artifact_or_digest);
+    } else {
+        println!("  Artifact: {}", artifact_or_digest);
+    }
     println!("  Bundle: {}", bundle_path);
     println!("  Media Type: {}", bundle.media_type);
     if let Ok(v) = bundle.version() {
@@ -144,13 +168,62 @@ fn main() {
     if let Some(id) = &identity {
         println!("  Required Identity: {}", id);
     }
+    if let Some(re) = &identity_regexp {
+        println!("  Required Identity Regexp: {}", re);
+    }
     if let Some(iss) = &issuer {
         println!("  Required Issuer: {}", iss);
     }
 
     // Verify
-    match verify(&artifact, &bundle, &policy, &trusted_root) {
+    let result = if is_digest {
+        // Parse digest (sha256:hex...)
+        let hex_digest = artifact_or_digest.strip_prefix("sha256:").unwrap();
+        let digest = match Sha256Hash::from_hex(hex_digest) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Error parsing digest: {}", e);
+                process::exit(1);
+            }
+        };
+        let artifact = Artifact::from(digest);
+        verify(artifact, &bundle, &policy, &trusted_root)
+    } else {
+        // Read artifact file
+        let artifact_bytes = match fs::read(artifact_or_digest) {
+            Ok(data) => data,
+            Err(e) => {
+                eprintln!("Error reading artifact '{}': {}", artifact_or_digest, e);
+                process::exit(1);
+            }
+        };
+        verify(&artifact_bytes, &bundle, &policy, &trusted_root)
+    };
+
+    match result {
         Ok(result) => {
+            // Check identity regexp if provided
+            if let Some(re_str) = &identity_regexp {
+                let re = match Regex::new(re_str) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("Error compiling identity regexp: {}", e);
+                        process::exit(1);
+                    }
+                };
+                if let Some(id) = &result.identity {
+                    if !re.is_match(id) {
+                        eprintln!("\nVerification: FAILED");
+                        eprintln!("  Identity '{}' does not match regexp '{}'", id, re_str);
+                        process::exit(1);
+                    }
+                } else {
+                    eprintln!("\nVerification: FAILED");
+                    eprintln!("  No identity found in certificate");
+                    process::exit(1);
+                }
+            }
+
             if result.success {
                 println!("\nVerification: SUCCESS");
                 if let Some(id) = &result.identity {
@@ -182,30 +255,36 @@ fn main() {
 }
 
 fn print_usage(program: &str) {
-    eprintln!("Usage: {} [OPTIONS] <ARTIFACT> <BUNDLE>", program);
+    eprintln!("Usage: {} [OPTIONS] <ARTIFACT|DIGEST> <BUNDLE>", program);
     eprintln!();
     eprintln!("Arguments:");
-    eprintln!("  <ARTIFACT>    Path to the artifact file to verify");
-    eprintln!("  <BUNDLE>      Path to the Sigstore bundle (.sigstore.json)");
+    eprintln!("  <ARTIFACT|DIGEST>  Path to artifact file OR sha256:hex digest");
+    eprintln!("  <BUNDLE>           Path to the Sigstore bundle (.sigstore.json)");
     eprintln!();
     eprintln!("Options:");
-    eprintln!("  -i, --identity <IDENTITY>  Required certificate identity (SAN)");
-    eprintln!("  -o, --issuer <ISSUER>      Required OIDC issuer");
-    eprintln!("  -h, --help                 Print this help message");
+    eprintln!("  --certificate-identity <ID>        Required certificate identity (exact match)");
+    eprintln!("  --certificate-identity-regexp <RE> Required certificate identity (regex)");
+    eprintln!("  --certificate-oidc-issuer <ISSUER> Required OIDC issuer");
+    eprintln!("  -h, --help                         Print this help message");
+    eprintln!();
+    eprintln!("Aliases (for backwards compatibility):");
+    eprintln!("  -i, --identity  Same as --certificate-identity");
+    eprintln!("  -o, --issuer    Same as --certificate-oidc-issuer");
     eprintln!();
     eprintln!("Examples:");
     eprintln!("  # Verify a bundle");
     eprintln!("  {} artifact.txt artifact.sigstore.json", program);
     eprintln!();
-    eprintln!("  # Verify with identity requirements (for GitHub Actions)");
-    eprintln!(
-        "  {} --identity https://github.com/org/repo/.github/workflows/release.yml@refs/tags/v1.0.0 \\",
-        program
-    );
-    eprintln!("      --issuer https://token.actions.githubusercontent.com \\");
+    eprintln!("  # Verify with identity regex (cosign-compatible)");
+    eprintln!("  {} --certificate-identity-regexp \".*\" \\", program);
+    eprintln!("      --certificate-oidc-issuer https://token.actions.githubusercontent.com \\");
     eprintln!("      artifact.txt artifact.sigstore.json");
     eprintln!();
+    eprintln!("  # Verify using digest instead of file");
+    eprintln!("  {} --certificate-identity-regexp \".*\" \\", program);
+    eprintln!("      --certificate-oidc-issuer https://token.actions.githubusercontent.com \\");
+    eprintln!("      sha256:abc123def456... bundle.sigstore.json");
+    eprintln!();
     eprintln!("Getting bundles from GitHub:");
-    eprintln!("  # Download attestation bundle for a GitHub release artifact");
     eprintln!("  gh attestation download <artifact-url> -o bundle.sigstore.json");
 }

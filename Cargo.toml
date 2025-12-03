@@ -69,6 +69,7 @@ chrono = { version = "0.4", features = ["serde"] }
 # Testing
 hex = "0.4"
 rstest = { version = "0.26", default-features = false }
+regex = "1.11"
 
 # Logging
 tracing = { version = "0.1" }

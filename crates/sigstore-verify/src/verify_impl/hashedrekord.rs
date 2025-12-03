@@ -318,8 +318,8 @@ fn validate_integrated_time(entry: &TransparencyLogEntry, bundle: &Bundle) -> Re
         let bundle_cert_der = bundle_cert.as_bytes();
 
         // Only validate integrated time for hashedrekord 0.0.1
-        // For 0.0.2 (Rekor v2), integrated_time is not present
-        if entry.kind_version.version == "0.0.1" && !entry.integrated_time.is_empty() {
+        // For 0.0.2 (Rekor v2), integrated_time is not present (0)
+        if entry.kind_version.version == "0.0.1" && entry.integrated_time != 0 {
             let cert = Certificate::from_der(bundle_cert_der).map_err(|e| {
                 Error::Verification(format!(
                     "failed to parse certificate for time validation: {}",
@@ -345,9 +345,7 @@ fn validate_integrated_time(entry: &TransparencyLogEntry, bundle: &Bundle) -> Re
                 })?
                 .as_secs() as i64;
 
-            let integrated_time = entry.integrated_time.parse::<i64>().map_err(|e| {
-                Error::Verification(format!("failed to parse integrated time: {}", e))
-            })?;
+            let integrated_time = entry.integrated_time;
 
             if integrated_time < not_before || integrated_time > not_after {
                 return Err(Error::Verification(format!(

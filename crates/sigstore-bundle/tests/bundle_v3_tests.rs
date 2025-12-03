@@ -73,8 +73,8 @@ fn test_parse_v3_bundle() {
     // Check tlog entries
     assert_eq!(bundle.verification_material.tlog_entries.len(), 1);
     let entry = &bundle.verification_material.tlog_entries[0];
-    assert_eq!(entry.log_index, LogIndex::new("25915956".to_string()));
-    assert_eq!(entry.integrated_time, "1712085549");
+    assert_eq!(entry.log_index, LogIndex::new(25915956));
+    assert_eq!(entry.integrated_time, 1712085549);
     assert_eq!(entry.kind_version.kind, "hashedrekord");
     assert_eq!(entry.kind_version.version, "0.0.1");
 
@@ -84,8 +84,8 @@ fn test_parse_v3_bundle() {
 
     // Check inclusion proof details
     let proof = entry.inclusion_proof.as_ref().unwrap();
-    assert_eq!(proof.log_index, LogIndex::new("25901137".to_string()));
-    assert_eq!(proof.tree_size, "25901138");
+    assert_eq!(proof.log_index, LogIndex::new(25901137));
+    assert_eq!(proof.tree_size, 25901138);
     assert_eq!(proof.hashes.len(), 11);
 }
 
@@ -225,7 +225,7 @@ fn test_inclusion_proof_verification() {
 
     // Verify the inclusion proof
     let leaf_index: u64 = proof.log_index.as_u64().unwrap();
-    let tree_size: u64 = proof.tree_size.parse().unwrap();
+    let tree_size: u64 = proof.tree_size.try_into().unwrap();
 
     let result = verify_inclusion_proof(&leaf_hash, leaf_index, tree_size, proof_hashes, root_hash);
 

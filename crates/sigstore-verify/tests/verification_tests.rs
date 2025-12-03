@@ -291,11 +291,11 @@ fn test_full_verification_flow() {
     // Extract tlog entry info
     let entry = &bundle.verification_material.tlog_entries[0];
     assert_eq!(entry.kind_version.kind, "dsse");
-    assert_eq!(entry.log_index, LogIndex::new("166143216".to_string()));
+    assert_eq!(entry.log_index, LogIndex::new(166143216));
 
     // Verify inclusion proof
     let proof = entry.inclusion_proof.as_ref().expect("Should have proof");
-    assert_eq!(proof.tree_size, "44238955");
+    assert_eq!(proof.tree_size, 44238955);
     assert_eq!(proof.hashes.len(), 10);
 
     // Run full verification - extract digest from bundle
@@ -332,11 +332,11 @@ fn test_full_verification_flow_happy_path() {
     // Extract tlog entry info
     let entry = &bundle.verification_material.tlog_entries[0];
     assert_eq!(entry.kind_version.kind, "dsse");
-    assert_eq!(entry.log_index, LogIndex::new("155690850".to_string()));
+    assert_eq!(entry.log_index, LogIndex::new(155690850));
 
     // Verify inclusion proof
     let proof = entry.inclusion_proof.as_ref().expect("Should have proof");
-    assert_eq!(proof.tree_size, "33786589");
+    assert_eq!(proof.tree_size, 33786589);
     assert_eq!(proof.hashes.len(), 11);
 
     // Run full verification - extract digest from bundle

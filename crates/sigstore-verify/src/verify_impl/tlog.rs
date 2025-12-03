@@ -43,38 +43,34 @@ pub fn verify_tlog_entries(
             verify_set(entry, trusted_root)?;
         }
 
-        // Validate integrated time
-        if !entry.integrated_time.is_empty() {
-            if let Ok(time) = entry.integrated_time.parse::<i64>() {
-                // Ignore 0 as it indicates invalid/missing time
-                if time > 0 {
-                    // Check that integrated time is not in the future (with clock skew tolerance)
-                    let now = chrono::Utc::now().timestamp();
-                    if time > now + clock_skew_seconds {
-                        return Err(Error::Verification(format!(
-                            "integrated time {} is in the future (current time: {}, tolerance: {}s)",
-                            time, now, clock_skew_seconds
-                        )));
-                    }
-
-                    // Check that integrated time is within certificate validity period
-                    if time < not_before {
-                        return Err(Error::Verification(format!(
-                            "integrated time {} is before certificate validity (not_before: {})",
-                            time, not_before
-                        )));
-                    }
-
-                    if time > not_after {
-                        return Err(Error::Verification(format!(
-                            "integrated time {} is after certificate validity (not_after: {})",
-                            time, not_after
-                        )));
-                    }
-
-                    integrated_time_result = Some(time);
-                }
+        // Validate integrated time (0 indicates missing/invalid time in v2 entries)
+        let time = entry.integrated_time;
+        if time > 0 {
+            // Check that integrated time is not in the future (with clock skew tolerance)
+            let now = chrono::Utc::now().timestamp();
+            if time > now + clock_skew_seconds {
+                return Err(Error::Verification(format!(
+                    "integrated time {} is in the future (current time: {}, tolerance: {}s)",
+                    time, now, clock_skew_seconds
+                )));
             }
+
+            // Check that integrated time is within certificate validity period
+            if time < not_before {
+                return Err(Error::Verification(format!(
+                    "integrated time {} is before certificate validity (not_before: {})",
+                    time, not_before
+                )));
+            }
+
+            if time > not_after {
+                return Err(Error::Verification(format!(
+                    "integrated time {} is after certificate validity (not_after: {})",
+                    time, not_after
+                )));
+            }
+
+            integrated_time_result = Some(time);
         }
     }
 
@@ -160,14 +156,11 @@ pub fn verify_set(entry: &TransparencyLogEntry, trusted_root: &TrustedRoot) -> R
     // Construct the payload (base64-encoded body)
     let body = entry.canonicalized_body.to_base64();
 
-    let integrated_time = entry
-        .integrated_time
-        .parse::<i64>()
-        .map_err(|_| Error::Verification("Invalid integrated time".into()))?;
+    let integrated_time = entry.integrated_time;
     let log_index = entry
         .log_index
         .as_u64()
-        .map_err(|_| Error::Verification("Invalid log index".into()))? as i64;
+        .ok_or_else(|| Error::Verification("Invalid log index".into()))? as i64;
 
     // Log ID for payload must be hex encoded
     let log_id_bytes = base64::engine::general_purpose::STANDARD

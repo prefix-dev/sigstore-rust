@@ -41,6 +41,7 @@ serde_json = { workspace = true }
 const-oid = { workspace = true }
 x509-cert = { workspace = true }
 sigstore-types = { workspace = true }
+regex = { workspace = true }
 
 [features]
 default = []

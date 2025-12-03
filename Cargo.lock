@@ -1688,6 +1688,7 @@ dependencies = [
  "const-oid",
  "hex",
  "pem",
+ "regex",
  "rustls-pki-types",
  "rustls-webpki",
  "serde",

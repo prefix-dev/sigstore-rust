@@ -196,14 +196,13 @@ async fn main() {
         );
         println!("  Log Index: {}", entry.log_index);
         // For V2, integrated_time is always 0 - RFC3161 timestamps are used instead
-        if let Ok(ts) = entry.integrated_time.parse::<i64>() {
-            if ts == 0 && entry.kind_version.version == "0.0.2" {
-                println!("  Integrated Time: (V2 uses RFC3161 timestamps)");
-            } else {
-                use chrono::{DateTime, Utc};
-                if let Some(dt) = DateTime::<Utc>::from_timestamp(ts, 0) {
-                    println!("  Integrated Time: {}", dt);
-                }
+        let ts = entry.integrated_time;
+        if ts == 0 && entry.kind_version.version == "0.0.2" {
+            println!("  Integrated Time: (V2 uses RFC3161 timestamps)");
+        } else {
+            use chrono::{DateTime, Utc};
+            if let Some(dt) = DateTime::<Utc>::from_timestamp(ts, 0) {
+                println!("  Integrated Time: {}", dt);
             }
         }
         // Show if we have inclusion proof (V2) vs just promise (V1)

@@ -141,14 +141,14 @@ fn validate_inclusion_proofs(bundle: &Bundle) -> Result<()> {
             // Get proof hashes (already decoded as Vec<Sha256Hash>)
             let proof_hashes: &[Sha256Hash] = &proof.hashes;
 
-            // Parse indices
+            // Get indices (now i64 internally)
             let leaf_index: u64 = proof
                 .log_index
                 .as_u64()
-                .map_err(|_| Error::Validation("invalid log_index in proof".to_string()))?;
+                .ok_or_else(|| Error::Validation("invalid log_index in proof".to_string()))?;
             let tree_size: u64 = proof
                 .tree_size
-                .parse()
+                .try_into()
                 .map_err(|_| Error::Validation("invalid tree_size in proof".to_string()))?;
 
             // Get expected root from checkpoint (already a Sha256Hash)

@@ -164,15 +164,14 @@ fn extract_v1_integrated_time_with_promise(bundle: &Bundle) -> Option<i64> {
             continue;
         }
 
-        if let Ok(time) = entry.integrated_time.parse::<i64>() {
-            if time > 0 {
-                if let Some(earliest) = earliest_time {
-                    if time < earliest {
-                        earliest_time = Some(time);
-                    }
-                } else {
+        let time = entry.integrated_time;
+        if time > 0 {
+            if let Some(earliest) = earliest_time {
+                if time < earliest {
                     earliest_time = Some(time);
                 }
+            } else {
+                earliest_time = Some(time);
             }
         }
     }

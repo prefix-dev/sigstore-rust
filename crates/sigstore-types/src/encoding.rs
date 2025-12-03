@@ -90,6 +90,30 @@ pub mod hex_bytes {
     }
 }
 
+/// Serde helper for i64 fields serialized as strings
+///
+/// JSON bundles use strings for large integers. This helper serializes
+/// i64 values as strings and parses them back.
+pub mod string_i64 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &i64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<i64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse::<i64>()
+            .map_err(|_| serde::de::Error::custom(format!("invalid integer: {}", s)))
+    }
+}
+
 // ============================================================================
 // Macro for creating base64-encoded newtype wrappers
 // ============================================================================
@@ -381,58 +405,102 @@ impl std::fmt::Display for EntryUuid {
     }
 }
 
-/// Transparency log index (numeric string)
+/// Transparency log index
 ///
-/// Represents a log index in the transparency log.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct LogIndex(String);
+/// Represents a log index in the transparency log. Per the protobuf spec,
+/// this is an int64. For JSON serialization, we serialize as an integer but
+/// accept both integers and strings for backwards compatibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LogIndex(i64);
 
 impl LogIndex {
-    pub fn new(s: String) -> Self {
-        LogIndex(s)
+    pub fn new(index: i64) -> Self {
+        LogIndex(index)
     }
 
-    pub fn from_u64(index: u64) -> Self {
-        LogIndex(index.to_string())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    pub fn into_string(self) -> String {
+    pub fn value(&self) -> i64 {
         self.0
     }
 
-    pub fn as_u64(&self) -> Result<u64> {
-        self.0
-            .parse()
-            .map_err(|e| Error::InvalidEncoding(format!("invalid log index '{}': {}", self.0, e)))
+    pub fn as_u64(&self) -> Option<u64> {
+        if self.0 >= 0 {
+            Some(self.0 as u64)
+        } else {
+            None
+        }
     }
 }
 
-impl From<String> for LogIndex {
-    fn from(s: String) -> Self {
-        LogIndex::new(s)
+impl From<i64> for LogIndex {
+    fn from(index: i64) -> Self {
+        LogIndex::new(index)
     }
 }
 
 impl From<u64> for LogIndex {
     fn from(index: u64) -> Self {
-        LogIndex::from_u64(index)
-    }
-}
-
-impl AsRef<str> for LogIndex {
-    fn as_ref(&self) -> &str {
-        &self.0
+        LogIndex::new(index as i64)
     }
 }
 
 impl std::fmt::Display for LogIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+impl Serialize for LogIndex {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // Serialize as string to match existing bundle format
+        serializer.serialize_str(&self.0.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for LogIndex {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, Visitor};
+
+        struct LogIndexVisitor;
+
+        impl<'de> Visitor<'de> for LogIndexVisitor {
+            type Value = LogIndex;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("an integer or string representing a log index")
+            }
+
+            fn visit_i64<E>(self, value: i64) -> std::result::Result<LogIndex, E>
+            where
+                E: de::Error,
+            {
+                Ok(LogIndex::new(value))
+            }
+
+            fn visit_u64<E>(self, value: u64) -> std::result::Result<LogIndex, E>
+            where
+                E: de::Error,
+            {
+                Ok(LogIndex::new(value as i64))
+            }
+
+            fn visit_str<E>(self, value: &str) -> std::result::Result<LogIndex, E>
+            where
+                E: de::Error,
+            {
+                value
+                    .parse::<i64>()
+                    .map(LogIndex::new)
+                    .map_err(|_| de::Error::custom(format!("invalid log index: {}", value)))
+            }
+        }
+
+        deserializer.deserialize_any(LogIndexVisitor)
     }
 }
 
