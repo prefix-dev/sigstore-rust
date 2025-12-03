@@ -73,12 +73,16 @@ jobs:
 
       - name: "[V1] Sign with cosign"
         run: |
+          cosign version
           cosign sign-blob \
             --yes \
             --bundle cosign-signed.sigstore.json \
             test-artifact.txt
           echo "Bundle created:"
-          cat cosign-signed.sigstore.json | jq -r '.mediaType'
+          echo "File size: $(wc -c < cosign-signed.sigstore.json) bytes"
+          cat cosign-signed.sigstore.json | jq -r '.mediaType // "NO_MEDIA_TYPE"'
+          echo "Top-level keys:"
+          cat cosign-signed.sigstore.json | jq 'keys'
 
       - name: "[V1] Verify cosign signature with sigstore-rust"
         run: |

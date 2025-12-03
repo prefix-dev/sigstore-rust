@@ -936,3 +936,64 @@ fn test_verify_conda_package_tampered() {
         "Verification should fail with tampered package"
     );
 }
+
+// Cosign v0.3 blob bundle for interop testing
+const COSIGN_V3_BLOB_BUNDLE: &str =
+    include_str!("../test_data/bundles/cosign-v3-blob.sigstore.json");
+
+/// Test that we can parse a bundle produced by cosign v3.x
+#[test]
+fn test_parse_cosign_v3_blob_bundle() {
+    let bundle =
+        Bundle::from_json(COSIGN_V3_BLOB_BUNDLE).expect("Failed to parse cosign v3 blob bundle");
+
+    // Check media type
+    assert_eq!(
+        bundle.media_type,
+        "application/vnd.dev.sigstore.bundle.v0.3+json"
+    );
+
+    // Check it's a message signature (not DSSE)
+    assert!(
+        matches!(
+            bundle.content,
+            sigstore_verify::types::SignatureContent::MessageSignature(_)
+        ),
+        "Expected MessageSignature content"
+    );
+
+    // Check tlog entry
+    assert_eq!(bundle.verification_material.tlog_entries.len(), 1);
+    let entry = &bundle.verification_material.tlog_entries[0];
+    assert_eq!(entry.kind_version.kind, "hashedrekord");
+    assert_eq!(entry.kind_version.version, "0.0.1");
+
+    // Check it has both inclusion proof and inclusion promise
+    assert!(
+        entry.inclusion_proof.is_some(),
+        "Expected inclusion proof"
+    );
+    assert!(
+        entry.inclusion_promise.is_some(),
+        "Expected inclusion promise (SET)"
+    );
+
+    // Check integrated time is present
+    assert!(entry.integrated_time > 0, "Expected integrated time > 0");
+}
+
+/// Test full verification of cosign-produced bundle
+#[test]
+fn test_verify_cosign_v3_blob_bundle() {
+    let bundle =
+        Bundle::from_json(COSIGN_V3_BLOB_BUNDLE).expect("Failed to parse cosign v3 blob bundle");
+
+    // The artifact content that was signed
+    let artifact = include_bytes!("../test_data/bundles/cosign-v3-blob.txt");
+
+    let policy = VerificationPolicy::default()
+        .require_issuer("https://github.com/login/oauth");
+
+    let result = verify(artifact, &bundle, &policy, &production_root());
+    assert!(result.is_ok(), "Verification failed: {:?}", result.err());
+}
