@@ -248,11 +248,18 @@ impl RekorClient {
             signed_entry_timestamp: entry_v2.inclusion_promise.map(|p| p.signed_entry_timestamp),
         });
 
+        // Convert log_id from V2 format (base64-encoded LogKeyId) to V1 format (hex-encoded HexLogId)
+        // V2 returns base64, but our LogEntry expects hex
+        let log_id_hex = match entry_v2.log_id.key_id.decode() {
+            Ok(bytes) => sigstore_types::HexLogId::from_bytes(&bytes),
+            Err(_) => sigstore_types::HexLogId::new(String::new()),
+        };
+
         Ok(LogEntry {
             uuid: Default::default(), // V2 response doesn't include UUID in body
             body: entry_v2.canonicalized_body,
             integrated_time,
-            log_id: entry_v2.log_id.key_id.into_string().into(),
+            log_id: log_id_hex,
             log_index,
             verification,
         })
@@ -338,11 +345,18 @@ impl RekorClient {
             signed_entry_timestamp: entry_v2.inclusion_promise.map(|p| p.signed_entry_timestamp),
         });
 
+        // Convert log_id from V2 format (base64-encoded LogKeyId) to V1 format (hex-encoded HexLogId)
+        // V2 returns base64, but our LogEntry expects hex
+        let log_id_hex = match entry_v2.log_id.key_id.decode() {
+            Ok(bytes) => sigstore_types::HexLogId::from_bytes(&bytes),
+            Err(_) => sigstore_types::HexLogId::new(String::new()),
+        };
+
         Ok(LogEntry {
             uuid: Default::default(), // V2 response doesn't include UUID in body
             body: entry_v2.canonicalized_body,
             integrated_time,
-            log_id: entry_v2.log_id.key_id.into_string().into(),
+            log_id: log_id_hex,
             log_index,
             verification,
         })

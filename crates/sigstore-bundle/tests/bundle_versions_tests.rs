@@ -2,8 +2,7 @@
 //!
 //! These tests use real bundle fixtures from sigstore-rs and sigstore-python.
 
-use sigstore_bundle::{validate_bundle, validate_bundle_with_options, ValidationOptions};
-use sigstore_types::Bundle;
+use sigstore_bundle::{validate_bundle, validate_bundle_with_options, Bundle, MediaType, ValidationOptions};
 
 /// v0.1 bundle with x509CertificateChain (from sigstore-rs)
 const V01_BUNDLE: &str = r#"{
@@ -63,26 +62,20 @@ fn test_parse_v01_bundle() {
 
     // Check media type
     assert_eq!(
-        bundle.media_type,
+        bundle.media_type(),
         "application/vnd.dev.sigstore.bundle+json;version=0.1"
     );
 
     // Check version
     let version = bundle.version().expect("Failed to get version");
-    assert_eq!(version, sigstore_types::MediaType::Bundle0_1);
+    assert_eq!(version, MediaType::Bundle0_1);
 
     // Check it has x509CertificateChain (not single certificate)
-    match &bundle.verification_material.content {
-        sigstore_types::bundle::VerificationMaterialContent::X509CertificateChain {
-            certificates,
-        } => {
-            assert!(
-                !certificates.is_empty(),
-                "Certificate chain should not be empty"
-            );
-        }
-        _ => panic!("Expected X509CertificateChain for v0.1 bundle"),
-    }
+    let vm = bundle
+        .verification_material()
+        .expect("Should have verification material");
+    let certs = vm.certificate_chain().expect("Should have certificate chain");
+    assert!(!certs.is_empty(), "Certificate chain should not be empty");
 
     // Should have inclusion promise
     assert!(bundle.has_inclusion_promise());
@@ -124,24 +117,22 @@ fn test_parse_v03_bundle() {
 
     // Check media type
     assert_eq!(
-        bundle.media_type,
+        bundle.media_type(),
         "application/vnd.dev.sigstore.bundle.v0.3+json"
     );
 
     // Check version
     let version = bundle.version().expect("Failed to get version");
-    assert_eq!(version, sigstore_types::MediaType::Bundle0_3);
+    assert_eq!(version, MediaType::Bundle0_3);
 
     // Check it has single certificate (not chain)
-    match &bundle.verification_material.content {
-        sigstore_types::bundle::VerificationMaterialContent::Certificate(cert) => {
-            assert!(
-                !cert.raw_bytes.as_bytes().is_empty(),
-                "Certificate should not be empty"
-            );
-        }
-        _ => panic!("Expected single Certificate for v0.3 bundle"),
-    }
+    let cert = bundle
+        .signing_certificate()
+        .expect("Should have signing certificate");
+    assert!(
+        !cert.as_bytes().is_empty(),
+        "Certificate should not be empty"
+    );
 
     // Should have inclusion proof
     assert!(bundle.has_inclusion_proof());
@@ -161,11 +152,11 @@ fn test_v03_bundle_with_timestamp() {
     let bundle = Bundle::from_json(V03_BUNDLE_WITH_TIMESTAMP).expect("Failed to parse bundle");
 
     // Should have timestamp verification data
-    let tvd = &bundle.verification_material.timestamp_verification_data;
-    assert!(
-        !tvd.rfc3161_timestamps.is_empty(),
-        "Should have RFC3161 timestamps"
-    );
+    let vm = bundle
+        .verification_material()
+        .expect("Should have verification material");
+    let timestamps = vm.rfc3161_timestamps();
+    assert!(!timestamps.is_empty(), "Should have RFC3161 timestamps");
 
     // Validate with timestamp requirement but skip proof (since we use simplified test data)
     let options = ValidationOptions {
@@ -192,11 +183,13 @@ fn test_v03_bundle_serialization_roundtrip() {
     let bundle2 = Bundle::from_json(&json).expect("Failed to re-parse");
 
     // Compare
-    assert_eq!(bundle.media_type, bundle2.media_type);
-    assert_eq!(
-        bundle.verification_material.tlog_entries.len(),
-        bundle2.verification_material.tlog_entries.len()
-    );
+    assert_eq!(bundle.media_type(), bundle2.media_type());
+
+    let vm1 = bundle.verification_material().unwrap();
+    let vm2 = bundle2.verification_material().unwrap();
+    let entries1: Vec<_> = vm1.tlog_entries().collect();
+    let entries2: Vec<_> = vm2.tlog_entries().collect();
+    assert_eq!(entries1.len(), entries2.len());
 }
 
 // ==== Version Comparison Tests ====
@@ -207,16 +200,13 @@ fn test_v01_vs_v03_certificate_format() {
     let v03 = Bundle::from_json(V03_BUNDLE_WITH_PROOF).expect("Failed to parse v0.3");
 
     // v0.1 uses X509CertificateChain
-    assert!(matches!(
-        v01.verification_material.content,
-        sigstore_types::bundle::VerificationMaterialContent::X509CertificateChain { .. }
-    ));
+    let vm01 = v01.verification_material().expect("Should have verification material");
+    let chain = vm01.certificate_chain().expect("Should have certificate chain");
+    assert!(!chain.is_empty(), "v0.1 should have certificate chain");
 
     // v0.3 uses single Certificate
-    assert!(matches!(
-        v03.verification_material.content,
-        sigstore_types::bundle::VerificationMaterialContent::Certificate(_)
-    ));
+    let cert = v03.signing_certificate();
+    assert!(cert.is_some(), "v0.3 should have single certificate");
 }
 
 #[test]
@@ -224,8 +214,8 @@ fn test_media_type_parsing() {
     let v01 = Bundle::from_json(V01_BUNDLE).expect("Failed to parse v0.1");
     let v03 = Bundle::from_json(V03_BUNDLE_WITH_PROOF).expect("Failed to parse v0.3");
 
-    assert_eq!(v01.version().unwrap(), sigstore_types::MediaType::Bundle0_1);
-    assert_eq!(v03.version().unwrap(), sigstore_types::MediaType::Bundle0_3);
+    assert_eq!(v01.version().unwrap(), MediaType::Bundle0_1);
+    assert_eq!(v03.version().unwrap(), MediaType::Bundle0_3);
 }
 
 // ==== Error Cases ====

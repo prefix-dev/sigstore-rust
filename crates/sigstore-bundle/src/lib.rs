@@ -7,6 +7,11 @@ pub mod builder;
 pub mod error;
 pub mod validation;
 
-pub use builder::{BundleV03, TlogEntryBuilder, VerificationMaterialV03};
+pub use builder::{tlog_entry_from_log_entry, BundleV03, SignatureContent, VerificationMaterialV03};
 pub use error::{Error, Result};
 pub use validation::{validate_bundle, validate_bundle_with_options, ValidationOptions};
+
+// Re-export proto types for convenience
+pub use sigstore_types::proto::{
+    Bundle, BundleBuilder, InclusionProofBuilder, MediaType, OwnedDsseEnvelope, TlogEntryBuilder,
+};

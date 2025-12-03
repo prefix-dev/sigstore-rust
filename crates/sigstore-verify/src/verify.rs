@@ -8,7 +8,8 @@ use sigstore_bundle::ValidationOptions;
 use sigstore_crypto::parse_certificate_info;
 use sigstore_trust_root::TrustedRoot;
 
-use sigstore_types::{Artifact, Bundle, Sha256Hash, SignatureContent, Statement};
+use sigstore_types::proto::Bundle;
+use sigstore_types::{Artifact, Sha256Hash, Statement};
 
 /// Default clock skew tolerance in seconds (60 seconds = 1 minute)
 pub const DEFAULT_CLOCK_SKEW_SECONDS: i64 = 60;
@@ -173,7 +174,8 @@ impl Verifier {
     /// ```no_run
     /// use sigstore_verify::{Verifier, VerificationPolicy};
     /// use sigstore_trust_root::TrustedRoot;
-    /// use sigstore_types::{Artifact, Bundle, Sha256Hash};
+    /// use sigstore_types::{Artifact, Sha256Hash};
+    /// use sigstore_bundle::Bundle;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let trusted_root = TrustedRoot::production()?;
@@ -227,9 +229,9 @@ impl Verifier {
             .map_err(|e| Error::Verification(format!("bundle validation failed: {}", e)))?;
 
         // Extract certificate for verification
-        let cert = crate::verify_impl::helpers::extract_certificate(
-            &bundle.verification_material.content,
-        )?;
+        let cert = bundle
+            .signing_certificate()
+            .ok_or_else(|| Error::Verification("no signing certificate in bundle".to_string()))?;
         let cert_info = parse_certificate_info(cert.as_bytes())
             .map_err(|e| Error::Verification(format!("failed to parse certificate: {}", e)))?;
 
@@ -242,7 +244,7 @@ impl Verifier {
         // validate the certificate chain, so this step comes first.
         // These include TSA timestamps and (in the case of rekor v1 entries)
         // rekor log integrated time.
-        let signature = crate::verify_impl::helpers::extract_signature(&bundle.content)?;
+        let signature = crate::verify_impl::helpers::extract_signature(bundle)?;
         let validation_time = crate::verify_impl::helpers::determine_validation_time(
             bundle,
             &signature,
@@ -253,7 +255,7 @@ impl Verifier {
         //      is valid at the time of signing, and has CODE_SIGNING EKU.
         if policy.verify_certificate {
             crate::verify_impl::helpers::verify_certificate_chain(
-                &bundle.verification_material.content,
+                bundle,
                 validation_time,
                 &self.trusted_root,
             )?;
@@ -262,10 +264,7 @@ impl Verifier {
             crate::verify_impl::helpers::validate_certificate_time(validation_time, &cert_info)?;
 
             // (2): Verify the signing certificate's SCT.
-            crate::verify_impl::helpers::verify_sct(
-                &bundle.verification_material.content,
-                &self.trusted_root,
-            )?;
+            crate::verify_impl::helpers::verify_sct(bundle, &self.trusted_root)?;
         }
 
         // (3): Verify against the given `VerificationPolicy`.
@@ -314,19 +313,20 @@ impl Verifier {
         // (7): Verify the signature and input against the signing certificate's
         //      public key.
         // For DSSE envelopes, verify using PAE (Pre-Authentication Encoding)
-        if let SignatureContent::DsseEnvelope(envelope) = &bundle.content {
-            let payload_bytes = envelope.decode_payload();
+        if let Some(envelope) = bundle.dsse_envelope() {
+            let payload_bytes = envelope.payload();
 
             // Compute the PAE that was signed
-            let pae = sigstore_types::pae(&envelope.payload_type, &payload_bytes);
+            let pae = sigstore_types::pae(envelope.payload_type(), payload_bytes);
 
             // Verify at least one signature is cryptographically valid
             let mut any_sig_valid = false;
-            for sig in &envelope.signatures {
+            for (_keyid, sig_bytes) in envelope.signatures() {
+                let sig = sigstore_types::SignatureBytes::new(sig_bytes.to_vec());
                 if sigstore_crypto::verify_signature(
                     &cert_info.public_key,
                     &pae,
-                    &sig.sig,
+                    &sig,
                     cert_info.signing_scheme,
                 )
                 .is_ok()
@@ -343,14 +343,12 @@ impl Verifier {
             }
 
             // Verify artifact hash matches (for DSSE with in-toto statements)
-            if envelope.payload_type == "application/vnd.in-toto+json" {
-                let payload_bytes = envelope.payload.as_bytes();
-
+            if envelope.payload_type() == "application/vnd.in-toto+json" {
                 let artifact_hash = compute_artifact_digest(&artifact);
                 let artifact_hash_hex = artifact_hash.to_hex();
 
-                let payload_str = std::str::from_utf8(payload_bytes).map_err(|e| {
-                    Error::Verification(format!("payload is not valid UTF-8: {}", e))
+                let payload_str = envelope.payload_as_str().ok_or_else(|| {
+                    Error::Verification("payload is not valid UTF-8".to_string())
                 })?;
 
                 let statement: Statement = serde_json::from_str(payload_str).map_err(|e| {

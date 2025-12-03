@@ -5,14 +5,15 @@
 //!
 //! This binary implements the conformance test protocol for Sigstore clients.
 
-use sigstore_bundle::{BundleV03, TlogEntryBuilder};
+use sigstore_bundle::{tlog_entry_from_log_entry, BundleV03};
 use sigstore_crypto::KeyPair;
 use sigstore_fulcio::FulcioClient;
 use sigstore_oidc::IdentityToken;
 use sigstore_rekor::RekorClient;
 use sigstore_trust_root::{SigningConfig, TrustedRoot};
 use sigstore_tsa::TimestampClient;
-use sigstore_types::{Bundle, Sha256Hash, SignatureContent};
+use sigstore_types::proto::Bundle;
+use sigstore_types::Sha256Hash;
 use sigstore_verify::{verify, VerificationPolicy};
 
 use std::env;
@@ -175,8 +176,7 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
 
     // Build bundle using the from_log_entry helper
     let kind_version = if use_rekor_v2 { "0.0.2" } else { "0.0.1" };
-    let tlog_entry =
-        TlogEntryBuilder::from_log_entry(&log_entry, "hashedrekord", kind_version).build();
+    let tlog_entry = tlog_entry_from_log_entry(&log_entry, "hashedrekord", kind_version);
 
     let mut bundle =
         BundleV03::with_certificate_and_signature(leaf_cert, signature.clone(), artifact_hash)
@@ -189,7 +189,7 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
         // Timestamp the signature
         let timestamp = tsa_client.timestamp_signature(&signature).await?;
 
-        bundle = bundle.with_rfc3161_timestamp(timestamp);
+        bundle = bundle.with_rfc3161_timestamp(timestamp.into_bytes());
     }
 
     let bundle = bundle.into_bundle();
@@ -297,46 +297,45 @@ fn verify_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             .into());
         }
 
-        // Extract expected hash from bundle
-        let expected_hash = match &bundle.content {
-            SignatureContent::MessageSignature(msg_sig) => {
-                if let Some(digest) = &msg_sig.message_digest {
-                    digest.digest.as_bytes().to_vec()
-                } else {
-                    return Err("Bundle does not contain message digest for verification".into());
-                }
-            }
-            SignatureContent::DsseEnvelope(envelope) => {
-                if envelope.payload_type == "application/vnd.in-toto+json" {
-                    let payload_bytes = envelope.payload.as_bytes();
-                    let payload_str = String::from_utf8(payload_bytes.to_vec())
-                        .map_err(|e| format!("Invalid UTF-8 in payload: {}", e))?;
-                    let statement: serde_json::Value = serde_json::from_str(&payload_str)
-                        .map_err(|e| format!("Failed to parse statement: {}", e))?;
+        // Extract expected hash from bundle using type-safe accessors
+        let expected_hash = if let Some(msg_sig) = bundle.message_signature() {
+            // MessageSignature - get digest from message_digest field
+            let digest = msg_sig
+                .digest()
+                .ok_or("Bundle message signature does not contain digest")?;
+            digest.as_bytes().to_vec()
+        } else if let Some(envelope) = bundle.dsse_envelope() {
+            // DSSE envelope - extract from in-toto statement
+            if envelope.payload_type() == "application/vnd.in-toto+json" {
+                let payload_bytes = envelope.payload();
+                let payload_str = std::str::from_utf8(payload_bytes)
+                    .map_err(|e| format!("Invalid UTF-8 in payload: {}", e))?;
+                let statement: serde_json::Value = serde_json::from_str(payload_str)
+                    .map_err(|e| format!("Failed to parse statement: {}", e))?;
 
-                    if let Some(subjects) = statement.get("subject").and_then(|s| s.as_array()) {
-                        if let Some(subject) = subjects.first() {
-                            if let Some(sha256) = subject
-                                .get("digest")
-                                .and_then(|d| d.get("sha256"))
-                                .and_then(|h| h.as_str())
-                            {
-                                hex::decode(sha256).map_err(|e| {
-                                    format!("Failed to decode subject digest: {}", e)
-                                })?
-                            } else {
-                                return Err("No sha256 digest in subject".into());
-                            }
+                if let Some(subjects) = statement.get("subject").and_then(|s| s.as_array()) {
+                    if let Some(subject) = subjects.first() {
+                        if let Some(sha256) = subject
+                            .get("digest")
+                            .and_then(|d| d.get("sha256"))
+                            .and_then(|h| h.as_str())
+                        {
+                            hex::decode(sha256)
+                                .map_err(|e| format!("Failed to decode subject digest: {}", e))?
                         } else {
-                            return Err("No subjects in statement".into());
+                            return Err("No sha256 digest in subject".into());
                         }
                     } else {
-                        return Err("No subject array in statement".into());
+                        return Err("No subjects in statement".into());
                     }
                 } else {
-                    return Err("DSSE envelope does not contain in-toto statement".into());
+                    return Err("No subject array in statement".into());
                 }
+            } else {
+                return Err("DSSE envelope does not contain in-toto statement".into());
             }
+        } else {
+            return Err("Bundle does not contain message signature or DSSE envelope".into());
         };
 
         // Verify that the provided digest matches the one in the bundle

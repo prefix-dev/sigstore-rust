@@ -28,8 +28,8 @@
 //! gh attestation verify <artifact> --owner <owner>
 //! ```
 
+use sigstore_bundle::Bundle;
 use sigstore_trust_root::TrustedRoot;
-use sigstore_types::Bundle;
 use sigstore_verify::{verify, VerificationPolicy};
 
 use std::env;
@@ -137,7 +137,7 @@ fn main() {
     println!("Verifying bundle...");
     println!("  Artifact: {}", artifact_path);
     println!("  Bundle: {}", bundle_path);
-    println!("  Media Type: {}", bundle.media_type);
+    println!("  Media Type: {}", bundle.media_type());
     if let Ok(v) = bundle.version() {
         println!("  Version: {:?}", v);
     }

@@ -7,7 +7,7 @@
 //! ```no_run
 //! use sigstore_verify::{verify, VerificationPolicy};
 //! use sigstore_trust_root::TrustedRoot;
-//! use sigstore_types::Bundle;
+//! use sigstore_bundle::Bundle;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let trusted_root = TrustedRoot::production()?;

@@ -3,7 +3,7 @@
 //! This module provides the main entry point for signing artifacts with Sigstore.
 
 use crate::error::{Error, Result};
-use sigstore_bundle::{BundleV03, TlogEntryBuilder};
+use sigstore_bundle::{tlog_entry_from_log_entry, BundleV03, OwnedDsseEnvelope, TlogEntryBuilder};
 use sigstore_crypto::{KeyPair, SigningScheme};
 use sigstore_fulcio::FulcioClient;
 use sigstore_oidc::IdentityToken;
@@ -13,8 +13,8 @@ use sigstore_rekor::{
 use sigstore_trust_root::SigningConfig as TufSigningConfig;
 use sigstore_tsa::TimestampClient;
 use sigstore_types::{
-    Artifact, Bundle, DerCertificate, DsseEnvelope, DsseSignature, KeyId, PayloadBytes, Sha256Hash,
-    SignatureBytes, Subject, TimestampToken,
+    proto::Bundle, Artifact, DerCertificate, DsseEnvelope, DsseSignature, KeyId, PayloadBytes,
+    Sha256Hash, SignatureBytes, Subject, TimestampToken,
 };
 
 /// Configuration for signing operations
@@ -249,10 +249,10 @@ impl Signer {
         let artifact_hash = sigstore_crypto::sha256(bytes);
         let mut bundle =
             BundleV03::with_certificate_and_signature(leaf_cert_der, signature, artifact_hash)
-                .with_tlog_entry(tlog_entry.build());
+                .with_tlog_entry(tlog_entry);
 
         if let Some(ts) = timestamp {
-            bundle = bundle.with_rfc3161_timestamp(ts);
+            bundle = bundle.with_rfc3161_timestamp(ts.into_bytes());
         }
 
         Ok(bundle.into_bundle())
@@ -321,7 +321,7 @@ impl Signer {
             };
 
         // Build TlogEntry from the log entry response
-        let tlog_builder = TlogEntryBuilder::from_log_entry(&log_entry, "hashedrekord", version);
+        let tlog_builder = tlog_entry_from_log_entry(&log_entry, "hashedrekord", version);
 
         Ok(tlog_builder)
     }
@@ -388,8 +388,9 @@ impl Signer {
         let pae = sigstore_types::pae(&payload_type, statement_json.as_bytes());
         let signature = key_pair.sign(&pae)?;
 
-        let dsse_envelope = DsseEnvelope::new(
-            payload_type,
+        // Create DSSE envelope for Rekor (using old type for API compatibility)
+        let dsse_envelope_for_rekor = DsseEnvelope::new(
+            payload_type.clone(),
             payload,
             vec![DsseSignature {
                 sig: signature.clone(),
@@ -399,7 +400,7 @@ impl Signer {
 
         // 5. Create DSSE Rekor entry
         let tlog_entry = self
-            .create_dsse_rekor_entry(&dsse_envelope, &leaf_cert_der)
+            .create_dsse_rekor_entry(&dsse_envelope_for_rekor, &leaf_cert_der)
             .await?;
 
         // 6. Get timestamp from TSA (optional)
@@ -409,12 +410,15 @@ impl Signer {
             None
         };
 
-        // 7. Build bundle with DSSE envelope
-        let mut bundle = BundleV03::with_certificate_and_dsse(leaf_cert_der, dsse_envelope)
-            .with_tlog_entry(tlog_entry.build());
+        // 7. Build bundle with DSSE envelope (using OwnedDsseEnvelope for the builder)
+        let owned_dsse = OwnedDsseEnvelope::new(payload_type, statement_json.as_bytes())
+            .with_signature(signature);
+
+        let mut bundle =
+            BundleV03::with_certificate_and_dsse(leaf_cert_der, owned_dsse).with_tlog_entry(tlog_entry);
 
         if let Some(ts) = timestamp {
-            bundle = bundle.with_rfc3161_timestamp(ts);
+            bundle = bundle.with_rfc3161_timestamp(ts.into_bytes());
         }
 
         Ok(bundle.into_bundle())
@@ -448,7 +452,7 @@ impl Signer {
         };
 
         // Build TlogEntry from the log entry response
-        let tlog_builder = TlogEntryBuilder::from_log_entry(&log_entry, "dsse", version);
+        let tlog_builder = tlog_entry_from_log_entry(&log_entry, "dsse", version);
 
         Ok(tlog_builder)
     }

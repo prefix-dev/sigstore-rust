@@ -3,9 +3,8 @@
 //! These tests validate the complete verification flow using real bundles.
 
 use sigstore_trust_root::TrustedRoot;
-use sigstore_types::{LogIndex, Sha256Hash};
-use sigstore_verify::bundle::{validate_bundle, validate_bundle_with_options, ValidationOptions};
-use sigstore_verify::types::Bundle;
+use sigstore_types::Sha256Hash;
+use sigstore_verify::bundle::{validate_bundle, validate_bundle_with_options, Bundle, ValidationOptions};
 use sigstore_verify::{verify, VerificationPolicy, Verifier};
 use x509_cert::der::Decode;
 
@@ -14,23 +13,20 @@ use x509_cert::der::Decode;
 /// For DSSE bundles, extracts from the in-toto statement subject.
 /// For hashedrekord bundles, extracts from the message digest field.
 fn extract_artifact_digest(bundle: &Bundle) -> Option<Sha256Hash> {
-    match &bundle.content {
-        sigstore_verify::types::SignatureContent::DsseEnvelope(env) => {
-            if env.payload_type == "application/vnd.in-toto+json" {
-                let payload_bytes = env.decode_payload();
-                let payload_str = String::from_utf8(payload_bytes).ok()?;
-                let statement: serde_json::Value = serde_json::from_str(&payload_str).ok()?;
-                let subject = statement["subject"].as_array()?.first()?;
-                let sha256 = subject["digest"]["sha256"].as_str()?;
-                Sha256Hash::from_hex(sha256).ok()
-            } else {
-                None
-            }
+    if let Some(dsse) = bundle.dsse_envelope() {
+        if dsse.payload_type() == "application/vnd.in-toto+json" {
+            let payload_str = std::str::from_utf8(dsse.payload()).ok()?;
+            let statement: serde_json::Value = serde_json::from_str(payload_str).ok()?;
+            let subject = statement["subject"].as_array()?.first()?;
+            let sha256 = subject["digest"]["sha256"].as_str()?;
+            Sha256Hash::from_hex(sha256).ok()
+        } else {
+            None
         }
-        sigstore_verify::types::SignatureContent::MessageSignature(msg_sig) => msg_sig
-            .message_digest
-            .as_ref()
-            .and_then(|d| Sha256Hash::try_from_slice(d.digest.as_bytes()).ok()),
+    } else if let Some(msg_sig) = bundle.message_signature() {
+        msg_sig.digest().map(|d| d.clone())
+    } else {
+        None
     }
 }
 
@@ -84,27 +80,23 @@ const BUNDLE_V3_GITHUB_WHL: &str =
 fn test_parse_v03_bundle() {
     let bundle = Bundle::from_json(V03_BUNDLE).expect("Failed to parse v0.3 bundle");
 
-    assert!(bundle.media_type.contains("v0.3"));
+    assert!(bundle.media_type().contains("v0.3"));
     assert!(bundle.has_inclusion_proof());
-    assert!(!bundle.verification_material.tlog_entries.is_empty());
+    assert!(bundle.verification_material().unwrap().tlog_entries().next().is_some());
 }
 
 #[test]
 fn test_parse_v03_dsse_bundle() {
     let bundle = Bundle::from_json(V03_BUNDLE_DSSE).expect("Failed to parse DSSE bundle");
 
-    assert!(bundle.media_type.contains("v0.3"));
+    assert!(bundle.media_type().contains("v0.3"));
     assert!(bundle.has_inclusion_proof());
     assert!(bundle.has_inclusion_promise());
 
     // Check DSSE envelope
-    match &bundle.content {
-        sigstore_verify::types::SignatureContent::DsseEnvelope(env) => {
-            assert_eq!(env.payload_type, "application/vnd.in-toto+json");
-            assert!(!env.signatures.is_empty());
-        }
-        _ => panic!("Expected DSSE envelope"),
-    }
+    let env = bundle.dsse_envelope().expect("Expected DSSE envelope");
+    assert_eq!(env.payload_type(), "application/vnd.in-toto+json");
+    assert!(env.signatures().next().is_some());
 }
 
 // ==== Bundle Validation Tests ====
@@ -289,14 +281,14 @@ fn test_full_verification_flow() {
     );
 
     // Extract tlog entry info
-    let entry = &bundle.verification_material.tlog_entries[0];
-    assert_eq!(entry.kind_version.kind, "dsse");
-    assert_eq!(entry.log_index, LogIndex::new("166143216".to_string()));
+    let entry = &bundle.verification_material().unwrap().tlog_entries().next().unwrap();
+    assert_eq!(entry.kind().unwrap(), "dsse");
+    assert_eq!(entry.log_index(), 166143216_i64);
 
     // Verify inclusion proof
-    let proof = entry.inclusion_proof.as_ref().expect("Should have proof");
-    assert_eq!(proof.tree_size, "44238955");
-    assert_eq!(proof.hashes.len(), 10);
+    let proof = entry.inclusion_proof().expect("Should have proof");
+    assert_eq!(proof.tree_size(), 44238955_i64);
+    assert_eq!(proof.hashes().count(), 10);
 
     // Run full verification - extract digest from bundle
     let artifact_digest =
@@ -330,14 +322,14 @@ fn test_full_verification_flow_happy_path() {
     );
 
     // Extract tlog entry info
-    let entry = &bundle.verification_material.tlog_entries[0];
-    assert_eq!(entry.kind_version.kind, "dsse");
-    assert_eq!(entry.log_index, LogIndex::new("155690850".to_string()));
+    let entry = &bundle.verification_material().unwrap().tlog_entries().next().unwrap();
+    assert_eq!(entry.kind().unwrap(), "dsse");
+    assert_eq!(entry.log_index(), 155690850_i64);
 
     // Verify inclusion proof
-    let proof = entry.inclusion_proof.as_ref().expect("Should have proof");
-    assert_eq!(proof.tree_size, "33786589");
-    assert_eq!(proof.hashes.len(), 11);
+    let proof = entry.inclusion_proof().expect("Should have proof");
+    assert_eq!(proof.tree_size(), 33786589_i64);
+    assert_eq!(proof.hashes().count(), 11);
 
     // Run full verification - extract digest from bundle
     let artifact_digest =
@@ -381,13 +373,12 @@ fn test_verification_with_different_bundle_versions() {
 #[test]
 fn test_checkpoint_parsing() {
     let bundle = Bundle::from_json(V03_BUNDLE_DSSE).unwrap();
-    let entry = &bundle.verification_material.tlog_entries[0];
-    let proof = entry.inclusion_proof.as_ref().unwrap();
+    let entry = bundle.verification_material().unwrap().tlog_entries().next().unwrap();
+    let proof = entry.inclusion_proof().unwrap();
 
     // Parse checkpoint
     let checkpoint = proof
-        .checkpoint
-        .parse()
+        .parse_checkpoint()
         .expect("Failed to parse checkpoint");
 
     assert_eq!(
@@ -409,10 +400,10 @@ fn test_serialization_roundtrip() {
     let bundle2 = Bundle::from_json(&json).expect("Failed to deserialize");
 
     // Verify key properties match
-    assert_eq!(bundle.media_type, bundle2.media_type);
+    assert_eq!(bundle.media_type(), bundle2.media_type());
     assert_eq!(
-        bundle.verification_material.tlog_entries.len(),
-        bundle2.verification_material.tlog_entries.len()
+        bundle.verification_material().unwrap().tlog_entries().count(),
+        bundle2.verification_material().unwrap().tlog_entries().count()
     );
 }
 
@@ -423,21 +414,17 @@ fn test_parse_dsse_bundle_from_python() {
     // DSSE bundle from sigstore-python test data
     let bundle = Bundle::from_json(DSSE_BUNDLE).expect("Failed to parse DSSE bundle");
 
-    assert!(bundle.media_type.contains("0.1"));
+    assert!(bundle.media_type().contains("0.1"));
 
     // Check DSSE envelope structure
-    match &bundle.content {
-        sigstore_verify::types::SignatureContent::DsseEnvelope(env) => {
-            assert_eq!(env.payload_type, "application/vnd.in-toto+json");
-            assert_eq!(env.signatures.len(), 1, "Should have exactly 1 signature");
-        }
-        _ => panic!("Expected DSSE envelope"),
-    }
+    let env = bundle.dsse_envelope().expect("Expected DSSE envelope");
+    assert_eq!(env.payload_type(), "application/vnd.in-toto+json");
+    assert_eq!(env.signatures().count(), 1, "Should have exactly 1 signature");
 
     // Verify tlog entry exists
-    assert_eq!(bundle.verification_material.tlog_entries.len(), 1);
-    let entry = &bundle.verification_material.tlog_entries[0];
-    assert_eq!(entry.kind_version.kind, "intoto");
+    assert_eq!(bundle.verification_material().unwrap().tlog_entries().count(), 1);
+    let entry = bundle.verification_material().unwrap().tlog_entries().next().unwrap();
+    assert_eq!(entry.kind().unwrap(), "intoto");
 }
 
 #[test]
@@ -446,13 +433,9 @@ fn test_parse_dsse_bundle_with_multiple_signatures() {
     let bundle = Bundle::from_json(DSSE_2SIGS_BUNDLE).expect("Failed to parse DSSE 2-sigs bundle");
 
     // Check DSSE envelope has multiple signatures
-    match &bundle.content {
-        sigstore_verify::types::SignatureContent::DsseEnvelope(env) => {
-            assert_eq!(env.payload_type, "application/vnd.in-toto+json");
-            assert_eq!(env.signatures.len(), 2, "Should have exactly 2 signatures");
-        }
-        _ => panic!("Expected DSSE envelope"),
-    }
+    let env = bundle.dsse_envelope().expect("Expected DSSE envelope");
+    assert_eq!(env.payload_type(), "application/vnd.in-toto+json");
+    assert_eq!(env.signatures().count(), 2, "Should have exactly 2 signatures");
 }
 
 #[test]
@@ -465,7 +448,7 @@ fn test_parse_bundle_invalid_version_still_parses() {
     // Note: Depending on implementation, this might fail. Let's see what happens.
     if let Ok(bundle) = bundle_result {
         // If it parses, the media type should be wrong
-        assert_eq!(bundle.media_type, "this is completely wrong");
+        assert_eq!(bundle.media_type(), "this is completely wrong");
     }
     // If it fails to parse, that's also acceptable behavior
 }
@@ -476,11 +459,11 @@ fn test_parse_cve_2022_36056_bundle() {
     let bundle = Bundle::from_json(BUNDLE_CVE_2022_36056).expect("Failed to parse CVE test bundle");
 
     // Should parse successfully
-    assert!(bundle.media_type.contains("v0.3"));
+    assert!(bundle.media_type().contains("v0.3"));
 
     // Check it's a hashedrekord type
-    let entry = &bundle.verification_material.tlog_entries[0];
-    assert_eq!(entry.kind_version.kind, "hashedrekord");
+    let entry = &bundle.verification_material().unwrap().tlog_entries().next().unwrap();
+    assert_eq!(entry.kind().unwrap(), "hashedrekord");
 
     // Bundle structure should be valid
     let result = validate_bundle(&bundle);
@@ -520,12 +503,8 @@ fn test_dsse_bundle_with_2_signatures_should_fail() {
     let bundle = Bundle::from_json(DSSE_2SIGS_BUNDLE).expect("Failed to parse DSSE 2-sigs bundle");
 
     // Verify the bundle has 2 signatures
-    match &bundle.content {
-        sigstore_verify::types::SignatureContent::DsseEnvelope(env) => {
-            assert_eq!(env.signatures.len(), 2, "Bundle should have 2 signatures");
-        }
-        _ => panic!("Expected DSSE envelope"),
-    }
+    let env = bundle.dsse_envelope().expect("Expected DSSE envelope");
+    assert_eq!(env.signatures().count(), 2, "Bundle should have 2 signatures");
 
     // Verification should fail because we only support single signatures
     // Use extracted digest or dummy - doesn't matter since validation should fail first
@@ -552,7 +531,7 @@ fn test_github_actions_provenance_bundle() {
 
     // Should parse successfully
     assert!(
-        bundle.media_type.contains("0.1") || bundle.media_type.contains("0.2"),
+        bundle.media_type().contains("0.1") || bundle.media_type().contains("0.2"),
         "Expected v0.1 or v0.2 bundle"
     );
 
@@ -626,7 +605,7 @@ fn test_bundle_no_cert_v1() {
     let bundle = Bundle::from_json(BUNDLE_NO_CERT_V1).expect("Failed to parse bundle_no_cert_v1");
 
     // Should parse successfully
-    assert!(bundle.media_type.contains("0.1"));
+    assert!(bundle.media_type().contains("0.1"));
 
     // But should not have a certificate
     let cert = bundle.signing_certificate();
@@ -655,29 +634,22 @@ fn test_bundle_no_checkpoint() {
         Bundle::from_json(BUNDLE_NO_CHECKPOINT).expect("Failed to parse bundle_no_checkpoint");
 
     // Should parse successfully
-    assert!(bundle.media_type.contains("0.2"));
+    assert!(bundle.media_type().contains("0.2"));
 
     // Should have a tlog entry
-    assert!(!bundle.verification_material.tlog_entries.is_empty());
+    assert!(bundle.verification_material().unwrap().tlog_entries().next().is_some());
 
-    let entry = &bundle.verification_material.tlog_entries[0];
-    let proof = entry.inclusion_proof.as_ref();
+    let entry = &bundle.verification_material().unwrap().tlog_entries().next().unwrap();
+    let proof = entry.inclusion_proof();
     assert!(proof.is_some(), "Should have inclusion proof");
 
     // The inclusion proof should exist but lack the checkpoint
     let proof = proof.unwrap();
 
-    // Checkpoint should be empty (default value)
+    // Checkpoint should be None
     assert!(
-        proof.checkpoint.envelope.is_empty(),
-        "Checkpoint should be empty when missing from bundle"
-    );
-
-    // Parsing empty checkpoint should fail
-    let checkpoint_result = proof.checkpoint.parse();
-    assert!(
-        checkpoint_result.is_err(),
-        "Checkpoint parsing should fail when checkpoint is missing"
+        proof.checkpoint_envelope().is_none(),
+        "Checkpoint should be None when missing from bundle"
     );
 }
 
@@ -688,11 +660,11 @@ fn test_bundle_no_log_entry() {
         Bundle::from_json(BUNDLE_NO_LOG_ENTRY).expect("Failed to parse bundle_no_log_entry");
 
     // Should parse successfully
-    assert!(bundle.media_type.contains("0.1"));
+    assert!(bundle.media_type().contains("0.1"));
 
     // But should have no tlog entries
     assert!(
-        bundle.verification_material.tlog_entries.is_empty(),
+        bundle.verification_material().unwrap().tlog_entries().next().is_none(),
         "Bundle should have no tlog entries"
     );
 
@@ -722,22 +694,22 @@ fn test_bundle_v3_no_signed_time() {
         .expect("Failed to parse bundle_v3_no_signed_time");
 
     // Should parse successfully
-    assert!(bundle.media_type.contains("0.3"));
+    assert!(bundle.media_type().contains("0.3"));
 
     // Should have a tlog entry
-    assert!(!bundle.verification_material.tlog_entries.is_empty());
+    assert!(bundle.verification_material().unwrap().tlog_entries().next().is_some());
 
-    let entry = &bundle.verification_material.tlog_entries[0];
+    let entry = &bundle.verification_material().unwrap().tlog_entries().next().unwrap();
 
     // Check that inclusion promise is missing
     assert!(
-        entry.inclusion_promise.is_none(),
+        entry.inclusion_promise().is_none(),
         "Bundle should not have inclusion promise (signed entry timestamp)"
     );
 
     // Check that we have inclusion proof though
     assert!(
-        entry.inclusion_proof.is_some(),
+        entry.inclusion_proof().is_some(),
         "Bundle should have inclusion proof"
     );
 
@@ -760,7 +732,7 @@ fn test_bundle_v3_github_whl() {
         Bundle::from_json(BUNDLE_V3_GITHUB_WHL).expect("Failed to parse bundle_v3_github_whl");
 
     // Should parse successfully
-    assert!(bundle.media_type.contains("0.2"));
+    assert!(bundle.media_type().contains("0.2"));
 
     // Should have certificate (raw DER bytes)
     let cert = bundle
@@ -787,14 +759,14 @@ fn test_bundle_v3_github_whl() {
 
     // Should have tlog entry
     assert!(
-        !bundle.verification_material.tlog_entries.is_empty(),
+        !bundle.verification_material().unwrap().tlog_entries().next().is_none(),
         "Should have transparency log entry"
     );
 
     // Should have inclusion proof
-    let entry = &bundle.verification_material.tlog_entries[0];
+    let entry = &bundle.verification_material().unwrap().tlog_entries().next().unwrap();
     assert!(
-        entry.inclusion_proof.is_some(),
+        entry.inclusion_proof().is_some(),
         "Should have inclusion proof"
     );
 }
@@ -808,61 +780,56 @@ fn test_parse_conda_attestation_bundle() {
         Bundle::from_json(CONDA_ATTESTATION_BUNDLE).expect("Failed to parse conda attestation");
 
     // Should be v0.3 bundle
-    assert!(bundle.media_type.contains("0.3"), "Expected v0.3 bundle");
+    assert!(bundle.media_type().contains("0.3"), "Expected v0.3 bundle");
 
     // Should be DSSE envelope with in-toto attestation
-    match &bundle.content {
-        sigstore_verify::types::SignatureContent::DsseEnvelope(env) => {
-            assert_eq!(
-                env.payload_type, "application/vnd.in-toto+json",
-                "Should have in-toto payload type"
-            );
-            assert_eq!(env.signatures.len(), 1, "Should have exactly 1 signature");
+    let env = bundle.dsse_envelope().expect("Expected DSSE envelope");
+    assert_eq!(
+        env.payload_type(), "application/vnd.in-toto+json",
+        "Should have in-toto payload type"
+    );
+    assert_eq!(env.signatures().count(), 1, "Should have exactly 1 signature");
 
-            // Decode payload and verify it's a conda attestation
-            let payload_bytes = env.decode_payload();
-            let payload_str =
-                String::from_utf8(payload_bytes).expect("Payload should be valid UTF-8");
-            let statement: serde_json::Value =
-                serde_json::from_str(&payload_str).expect("Payload should be valid JSON");
+    // Decode payload and verify it's a conda attestation
+    let payload_bytes = env.payload();
+    let payload_str = std::str::from_utf8(payload_bytes).expect("Payload should be valid UTF-8");
+    let statement: serde_json::Value =
+        serde_json::from_str(payload_str).expect("Payload should be valid JSON");
 
-            assert_eq!(
-                statement["_type"].as_str(),
-                Some("https://in-toto.io/Statement/v1"),
-                "Should be in-toto Statement v1"
-            );
-            assert_eq!(
-                statement["predicateType"].as_str(),
-                Some("https://schemas.conda.org/attestations-publish-1.schema.json"),
-                "Should have conda attestation predicate type"
-            );
+    assert_eq!(
+        statement["_type"].as_str(),
+        Some("https://in-toto.io/Statement/v1"),
+        "Should be in-toto Statement v1"
+    );
+    assert_eq!(
+        statement["predicateType"].as_str(),
+        Some("https://schemas.conda.org/attestations-publish-1.schema.json"),
+        "Should have conda attestation predicate type"
+    );
 
-            // Check subject
-            let subjects = statement["subject"]
-                .as_array()
-                .expect("Should have subjects");
-            assert_eq!(subjects.len(), 1, "Should have one subject");
-            assert_eq!(
-                subjects[0]["name"].as_str(),
-                Some("signed-package-2.1.0-hb0f4dca_0.conda"),
-                "Subject name should match package filename"
-            );
-        }
-        _ => panic!("Expected DSSE envelope"),
-    }
+    // Check subject
+    let subjects = statement["subject"]
+        .as_array()
+        .expect("Should have subjects");
+    assert_eq!(subjects.len(), 1, "Should have one subject");
+    assert_eq!(
+        subjects[0]["name"].as_str(),
+        Some("signed-package-2.1.0-hb0f4dca_0.conda"),
+        "Subject name should match package filename"
+    );
 
     // Should have certificate
     let cert = bundle.signing_certificate();
     assert!(cert.is_some(), "Should have a signing certificate");
 
     // Should have tlog entry
-    assert!(!bundle.verification_material.tlog_entries.is_empty());
-    let entry = &bundle.verification_material.tlog_entries[0];
-    assert_eq!(entry.kind_version.kind, "dsse");
+    assert!(bundle.verification_material().unwrap().tlog_entries().next().is_some());
+    let entry = &bundle.verification_material().unwrap().tlog_entries().next().unwrap();
+    assert_eq!(entry.kind().unwrap(), "dsse");
 
     // Should have inclusion proof
     assert!(
-        entry.inclusion_proof.is_some(),
+        entry.inclusion_proof().is_some(),
         "Should have inclusion proof"
     );
 }

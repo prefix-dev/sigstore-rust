@@ -6,20 +6,28 @@
 use crate::error::{Error, Result};
 use base64::Engine;
 use sigstore_rekor::body::RekorEntryBody;
-use sigstore_types::{Bundle, SignatureContent, TransparencyLogEntry};
+use sigstore_types::proto::{Bundle, DsseEnvelope, TransparencyLogEntry};
 
 /// Verify DSSE envelope matches Rekor entry (for DSSE bundles)
 pub fn verify_dsse_entries(bundle: &Bundle) -> Result<()> {
-    let envelope = match &bundle.content {
-        SignatureContent::DsseEnvelope(env) => env,
-        _ => return Ok(()), // Not a DSSE bundle
+    let envelope = match bundle.dsse_envelope() {
+        Some(env) => env,
+        None => return Ok(()), // Not a DSSE bundle
     };
 
-    for entry in &bundle.verification_material.tlog_entries {
-        if entry.kind_version.kind == "dsse" {
-            match entry.kind_version.version.as_str() {
-                "0.0.1" => verify_dsse_v001(entry, envelope, bundle)?,
-                "0.0.2" => verify_dsse_v002(entry, envelope, bundle)?,
+    let vm = match bundle.verification_material() {
+        Some(vm) => vm,
+        None => return Ok(()),
+    };
+
+    for entry in vm.tlog_entries() {
+        let kind = entry.kind().unwrap_or("");
+        let version = entry.version().unwrap_or("");
+
+        if kind == "dsse" {
+            match version {
+                "0.0.1" => verify_dsse_v001(&entry, &envelope, bundle)?,
+                "0.0.2" => verify_dsse_v002(&entry, &envelope, bundle)?,
                 _ => {} // Unknown version, skip
             }
         }
@@ -40,16 +48,17 @@ pub fn verify_dsse_entries(bundle: &Bundle) -> Result<()> {
 /// - Payload hash (hash of envelope.payload bytes)
 /// - Signatures list matches between entry and envelope (both signature and verifier)
 fn verify_dsse_v001(
-    entry: &TransparencyLogEntry,
-    envelope: &sigstore_types::DsseEnvelope,
+    entry: &TransparencyLogEntry<'_>,
+    envelope: &DsseEnvelope<'_>,
     bundle: &Bundle,
 ) -> Result<()> {
-    let body = RekorEntryBody::from_base64_json(
-        &entry.canonicalized_body.to_base64(),
-        &entry.kind_version.kind,
-        &entry.kind_version.version,
-    )
-    .map_err(|e| Error::Verification(format!("failed to parse Rekor body: {}", e)))?;
+    let kind = entry.kind().unwrap_or("dsse");
+    let version = entry.version().unwrap_or("0.0.1");
+    let body_bytes = entry.canonicalized_body_bytes();
+    let body_b64 = base64::engine::general_purpose::STANDARD.encode(body_bytes);
+
+    let body = RekorEntryBody::from_base64_json(&body_b64, kind, version)
+        .map_err(|e| Error::Verification(format!("failed to parse Rekor body: {}", e)))?;
 
     let (expected_hash, rekor_signatures) = match &body {
         RekorEntryBody::DsseV001(dsse_body) => (
@@ -64,7 +73,7 @@ fn verify_dsse_v001(
     };
 
     // Verify payload hash (v0.0.1 uses hex encoding)
-    let payload_bytes = envelope.payload.as_bytes();
+    let payload_bytes = envelope.payload();
     let payload_hash = sigstore_crypto::sha256(payload_bytes);
     let payload_hash_hex = hex::encode(payload_hash);
 
@@ -76,22 +85,24 @@ fn verify_dsse_v001(
     }
 
     // Extract the signing certificate from the bundle
-    let cert = super::helpers::extract_certificate(&bundle.verification_material.content)?;
+    let cert = bundle
+        .signing_certificate()
+        .ok_or_else(|| Error::Verification("no signing certificate in bundle".to_string()))?;
 
     // Verify that the signatures in the bundle match what's in Rekor
     // This prevents signature substitution attacks
     // IMPORTANT: We must verify BOTH the signature bytes AND the verifier (certificate)
-    if envelope.signatures.len() != rekor_signatures.len() {
+    if envelope.signatures_count() != rekor_signatures.len() {
         return Err(Error::Verification(format!(
             "DSSE signature count mismatch: bundle has {}, Rekor entry has {}",
-            envelope.signatures.len(),
+            envelope.signatures_count(),
             rekor_signatures.len()
         )));
     }
 
     // Check that each signature in the bundle exists in the Rekor entry
     // We must match both the signature AND the verifier to prevent signature substitution
-    for bundle_sig in &envelope.signatures {
+    for (_keyid, bundle_sig) in envelope.signatures() {
         let mut found = false;
         for rekor_sig in rekor_signatures {
             // Convert Rekor's PEM verifier to DER for canonical comparison
@@ -100,7 +111,7 @@ fn verify_dsse_v001(
                 .map_err(|e| Error::Verification(format!("{}", e)))?;
 
             // Compare both signature bytes AND the verifier (certificate as DER)
-            if bundle_sig.sig.as_bytes() == rekor_sig.signature.as_bytes()
+            if bundle_sig == rekor_sig.signature.as_bytes()
                 && cert.as_bytes() == rekor_cert_der.as_bytes()
             {
                 found = true;
@@ -119,16 +130,17 @@ fn verify_dsse_v001(
 
 /// Verify DSSE v0.0.2 entry (payload hash and signature validation)
 fn verify_dsse_v002(
-    entry: &TransparencyLogEntry,
-    envelope: &sigstore_types::DsseEnvelope,
+    entry: &TransparencyLogEntry<'_>,
+    envelope: &DsseEnvelope<'_>,
     bundle: &Bundle,
 ) -> Result<()> {
-    let body = RekorEntryBody::from_base64_json(
-        &entry.canonicalized_body.to_base64(),
-        &entry.kind_version.kind,
-        &entry.kind_version.version,
-    )
-    .map_err(|e| Error::Verification(format!("failed to parse Rekor body: {}", e)))?;
+    let kind = entry.kind().unwrap_or("dsse");
+    let version = entry.version().unwrap_or("0.0.2");
+    let body_bytes = entry.canonicalized_body_bytes();
+    let body_b64 = base64::engine::general_purpose::STANDARD.encode(body_bytes);
+
+    let body = RekorEntryBody::from_base64_json(&body_b64, kind, version)
+        .map_err(|e| Error::Verification(format!("failed to parse Rekor body: {}", e)))?;
 
     let (expected_hash, rekor_signatures) = match &body {
         RekorEntryBody::DsseV002(dsse_body) => (
@@ -143,7 +155,7 @@ fn verify_dsse_v002(
     };
 
     // Compute actual payload hash
-    let payload_bytes = envelope.payload.as_bytes();
+    let payload_bytes = envelope.payload();
     let payload_hash = sigstore_crypto::sha256(payload_bytes);
 
     // Compare hashes (expected_hash is Vec<u8>)
@@ -156,29 +168,31 @@ fn verify_dsse_v002(
     }
 
     // Extract the signing certificate from the bundle
-    let cert = super::helpers::extract_certificate(&bundle.verification_material.content)?;
+    let cert = bundle
+        .signing_certificate()
+        .ok_or_else(|| Error::Verification("no signing certificate in bundle".to_string()))?;
 
     // Verify that the signatures in the bundle match what's in Rekor
     // This prevents signature substitution attacks
     // IMPORTANT: We must verify BOTH the signature bytes AND the verifier (certificate)
 
-    if envelope.signatures.len() != rekor_signatures.len() {
+    if envelope.signatures_count() != rekor_signatures.len() {
         return Err(Error::Verification(format!(
             "DSSE signature count mismatch: bundle has {}, Rekor entry has {}",
-            envelope.signatures.len(),
+            envelope.signatures_count(),
             rekor_signatures.len()
         )));
     }
 
     // Check that each signature in the bundle exists in the Rekor entry
     // We must match both the signature AND the verifier to prevent signature substitution
-    for bundle_sig in &envelope.signatures {
+    for (_keyid, bundle_sig) in envelope.signatures() {
         let mut found = false;
         for rekor_sig in rekor_signatures {
             // Compare both signature bytes AND the verifier (certificate)
             // The signature field in the bundle is SignatureBytes, compare as bytes
             // The verifier contains the x509Certificate.rawBytes (DerCertificate)
-            if bundle_sig.sig.as_bytes() == rekor_sig.content.as_bytes()
+            if bundle_sig == rekor_sig.content.as_bytes()
                 && cert.as_bytes() == rekor_sig.verifier.x509_certificate.raw_bytes.as_bytes()
             {
                 found = true;
@@ -197,14 +211,20 @@ fn verify_dsse_v002(
 
 /// Verify DSSE payload matches what's in Rekor (for intoto entries)
 pub fn verify_intoto_entries(bundle: &Bundle) -> Result<()> {
-    let envelope = match &bundle.content {
-        SignatureContent::DsseEnvelope(env) => env,
-        _ => return Ok(()), // Not a DSSE bundle
+    let envelope = match bundle.dsse_envelope() {
+        Some(env) => env,
+        None => return Ok(()), // Not a DSSE bundle
     };
 
-    for entry in &bundle.verification_material.tlog_entries {
-        if entry.kind_version.kind == "intoto" {
-            verify_intoto_v002(entry, envelope)?;
+    let vm = match bundle.verification_material() {
+        Some(vm) => vm,
+        None => return Ok(()),
+    };
+
+    for entry in vm.tlog_entries() {
+        let kind = entry.kind().unwrap_or("");
+        if kind == "intoto" {
+            verify_intoto_v002(&entry, &envelope)?;
         }
     }
 
@@ -212,16 +232,14 @@ pub fn verify_intoto_entries(bundle: &Bundle) -> Result<()> {
 }
 
 /// Verify intoto v0.0.2 entry
-fn verify_intoto_v002(
-    entry: &TransparencyLogEntry,
-    envelope: &sigstore_types::DsseEnvelope,
-) -> Result<()> {
-    let body = RekorEntryBody::from_base64_json(
-        &entry.canonicalized_body.to_base64(),
-        &entry.kind_version.kind,
-        &entry.kind_version.version,
-    )
-    .map_err(|e| Error::Verification(format!("failed to parse Rekor body: {}", e)))?;
+fn verify_intoto_v002(entry: &TransparencyLogEntry<'_>, envelope: &DsseEnvelope<'_>) -> Result<()> {
+    let kind = entry.kind().unwrap_or("intoto");
+    let version = entry.version().unwrap_or("0.0.2");
+    let body_bytes = entry.canonicalized_body_bytes();
+    let body_b64 = base64::engine::general_purpose::STANDARD.encode(body_bytes);
+
+    let body = RekorEntryBody::from_base64_json(&body_b64, kind, version)
+        .map_err(|e| Error::Verification(format!("failed to parse Rekor body: {}", e)))?;
 
     let (rekor_payload_b64, rekor_signatures) = match &body {
         RekorEntryBody::IntotoV002(intoto_body) => (
@@ -241,7 +259,7 @@ fn verify_intoto_v002(
         .map_err(|e| Error::Verification(format!("failed to decode Rekor payload: {}", e)))?;
 
     // Compare with bundle payload bytes
-    if envelope.payload.as_bytes() != rekor_payload_bytes.as_slice() {
+    if envelope.payload() != rekor_payload_bytes.as_slice() {
         return Err(Error::Verification(
             "DSSE payload in bundle does not match intoto Rekor entry".to_string(),
         ));
@@ -249,7 +267,7 @@ fn verify_intoto_v002(
 
     // Validate that the signatures match
     let mut found_match = false;
-    for bundle_sig in &envelope.signatures {
+    for (_keyid, bundle_sig) in envelope.signatures() {
         for rekor_sig in rekor_signatures {
             // The Rekor signature is also double-base64-encoded, decode it once
             let rekor_sig_decoded = base64::engine::general_purpose::STANDARD
@@ -258,7 +276,7 @@ fn verify_intoto_v002(
                     Error::Verification(format!("failed to decode Rekor signature: {}", e))
                 })?;
 
-            if bundle_sig.sig.as_bytes() == rekor_sig_decoded.as_slice() {
+            if bundle_sig == rekor_sig_decoded.as_slice() {
                 found_match = true;
                 break;
             }

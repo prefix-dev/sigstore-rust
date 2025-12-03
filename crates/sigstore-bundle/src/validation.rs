@@ -4,7 +4,8 @@
 
 use crate::error::{Error, Result};
 use sigstore_merkle::verify_inclusion_proof;
-use sigstore_types::{Bundle, MediaType, Sha256Hash};
+use sigstore_types::proto::{Bundle, MediaType};
+use sigstore_types::Sha256Hash;
 
 /// Validation options
 #[derive(Debug, Clone)]
@@ -76,14 +77,22 @@ fn validate_v0_2(bundle: &Bundle, options: &ValidationOptions) -> Result<()> {
 /// Validate a v0.3 bundle
 fn validate_v0_3(bundle: &Bundle, options: &ValidationOptions) -> Result<()> {
     // v0.3 must have single certificate (not chain) or public key
-    match &bundle.verification_material.content {
-        sigstore_types::bundle::VerificationMaterialContent::Certificate(_) => {}
-        sigstore_types::bundle::VerificationMaterialContent::X509CertificateChain { .. } => {
-            return Err(Error::Validation(
-                "v0.3 bundle must use single certificate, not chain".to_string(),
-            ));
-        }
-        sigstore_types::bundle::VerificationMaterialContent::PublicKey { .. } => {}
+    let vm = bundle
+        .verification_material()
+        .ok_or_else(|| Error::Validation("bundle must have verification material".to_string()))?;
+
+    // Check that we don't have a certificate chain (only allowed in v0.1/v0.2)
+    if vm.certificate_chain().is_some() {
+        return Err(Error::Validation(
+            "v0.3 bundle must use single certificate, not chain".to_string(),
+        ));
+    }
+
+    // Must have either certificate or public key hint
+    if vm.certificate().is_none() && vm.public_key_hint().is_none() {
+        return Err(Error::Validation(
+            "v0.3 bundle must have certificate or public key hint".to_string(),
+        ));
     }
 
     // v0.3 requires inclusion proof
@@ -102,21 +111,19 @@ fn validate_v0_3(bundle: &Bundle, options: &ValidationOptions) -> Result<()> {
 
 /// Common validation for all bundle versions
 fn validate_common(bundle: &Bundle, options: &ValidationOptions) -> Result<()> {
+    let vm = bundle
+        .verification_material()
+        .ok_or_else(|| Error::Validation("bundle must have verification material".to_string()))?;
+
     // Must have at least one tlog entry
-    if bundle.verification_material.tlog_entries.is_empty() {
+    if vm.tlog_entries_count() == 0 {
         return Err(Error::Validation(
             "bundle must have at least one tlog entry".to_string(),
         ));
     }
 
     // Check timestamp if required
-    if options.require_timestamp
-        && bundle
-            .verification_material
-            .timestamp_verification_data
-            .rfc3161_timestamps
-            .is_empty()
-    {
+    if options.require_timestamp && vm.rfc3161_timestamps().is_empty() {
         return Err(Error::Validation(
             "bundle must have timestamp verification data".to_string(),
         ));
@@ -127,47 +134,39 @@ fn validate_common(bundle: &Bundle, options: &ValidationOptions) -> Result<()> {
 
 /// Validate inclusion proofs in the bundle
 fn validate_inclusion_proofs(bundle: &Bundle) -> Result<()> {
-    for entry in &bundle.verification_material.tlog_entries {
-        if let Some(proof) = &entry.inclusion_proof {
+    let vm = match bundle.verification_material() {
+        Some(vm) => vm,
+        None => return Ok(()), // No verification material, nothing to validate
+    };
+
+    for entry in vm.tlog_entries() {
+        if let Some(proof) = entry.inclusion_proof() {
             // Parse the checkpoint to get the expected root
             let checkpoint = proof
-                .checkpoint
-                .parse()
+                .parse_checkpoint()
                 .map_err(|e| Error::Validation(format!("failed to parse checkpoint: {}", e)))?;
 
             // Get the leaf (canonicalized body) bytes
-            let leaf_data = entry.canonicalized_body.as_bytes();
+            let leaf_data = entry.canonicalized_body_bytes();
 
-            // Get proof hashes (already decoded as Vec<Sha256Hash>)
-            let proof_hashes: &[Sha256Hash] = &proof.hashes;
+            // Get proof hashes
+            let proof_hashes: Vec<Sha256Hash> = proof.hashes().collect();
 
-            // Parse indices
-            let leaf_index: u64 = proof
-                .log_index
-                .as_u64()
-                .map_err(|_| Error::Validation("invalid log_index in proof".to_string()))?;
-            let tree_size: u64 = proof
-                .tree_size
-                .parse()
-                .map_err(|_| Error::Validation("invalid tree_size in proof".to_string()))?;
+            // Get indices
+            let leaf_index = proof.log_index() as u64;
+            let tree_size = proof.tree_size() as u64;
 
-            // Get expected root from checkpoint (already a Sha256Hash)
+            // Get expected root from checkpoint
             let expected_root = checkpoint.root_hash;
 
             // Hash the leaf
             let leaf_hash = sigstore_merkle::hash_leaf(leaf_data);
 
             // Verify the inclusion proof
-            verify_inclusion_proof(
-                &leaf_hash,
-                leaf_index,
-                tree_size,
-                proof_hashes,
-                &expected_root,
-            )
-            .map_err(|e| {
-                Error::Validation(format!("inclusion proof verification failed: {}", e))
-            })?;
+            verify_inclusion_proof(&leaf_hash, leaf_index, tree_size, &proof_hashes, &expected_root)
+                .map_err(|e| {
+                    Error::Validation(format!("inclusion proof verification failed: {}", e))
+                })?;
         }
     }
 

@@ -8,41 +8,30 @@ use const_oid::db::rfc5912::ID_KP_CODE_SIGNING;
 use rustls_pki_types::{CertificateDer, UnixTime};
 use sigstore_crypto::CertificateInfo;
 use sigstore_trust_root::TrustedRoot;
-use sigstore_types::bundle::VerificationMaterialContent;
-use sigstore_types::{Bundle, DerCertificate, DerPublicKey, SignatureBytes, SignatureContent};
+use sigstore_types::proto::Bundle;
+use sigstore_types::{DerCertificate, DerPublicKey, SignatureBytes};
 use webpki::{anchor_from_trusted_cert, EndEntityCert, KeyUsage, ALL_VERIFICATION_ALGS};
 
-/// Extract and decode the signing certificate from verification material
-pub fn extract_certificate(
-    verification_material: &VerificationMaterialContent,
-) -> Result<DerCertificate> {
-    match verification_material {
-        VerificationMaterialContent::Certificate(cert) => Ok(cert.raw_bytes.clone()),
-        VerificationMaterialContent::X509CertificateChain { certificates } => {
-            if certificates.is_empty() {
-                return Err(Error::Verification("no certificates in chain".to_string()));
-            }
-            Ok(certificates[0].raw_bytes.clone())
-        }
-        VerificationMaterialContent::PublicKey { .. } => Err(Error::Verification(
-            "public key verification not yet supported".to_string(),
-        )),
-    }
-}
-
 /// Extract signature from bundle content (needed for TSA verification)
-pub fn extract_signature(content: &SignatureContent) -> Result<SignatureBytes> {
-    match content {
-        SignatureContent::MessageSignature(msg_sig) => Ok(msg_sig.signature.clone()),
-        SignatureContent::DsseEnvelope(envelope) => {
-            if envelope.signatures.is_empty() {
-                return Err(Error::Verification(
-                    "no signatures in DSSE envelope".to_string(),
-                ));
-            }
-            Ok(envelope.signatures[0].sig.clone())
-        }
+pub fn extract_signature(bundle: &Bundle) -> Result<SignatureBytes> {
+    // Try message signature first
+    if let Some(msg_sig) = bundle.message_signature() {
+        return Ok(msg_sig.signature());
     }
+
+    // Then try DSSE envelope
+    if let Some(envelope) = bundle.dsse_envelope() {
+        if let Some(sig) = envelope.signature() {
+            return Ok(sig);
+        }
+        return Err(Error::Verification(
+            "no signatures in DSSE envelope".to_string(),
+        ));
+    }
+
+    Err(Error::Verification(
+        "no signature content in bundle".to_string(),
+    ))
 }
 
 /// Extract and verify TSA RFC 3161 timestamps
@@ -55,26 +44,20 @@ pub fn extract_tsa_timestamp(
     use sigstore_tsa::{verify_timestamp_response, VerifyOpts as TsaVerifyOpts};
 
     // Check if bundle has TSA timestamps
-    if bundle
-        .verification_material
-        .timestamp_verification_data
-        .rfc3161_timestamps
-        .is_empty()
-    {
+    let vm = match bundle.verification_material() {
+        Some(vm) => vm,
+        None => return Ok(None),
+    };
+
+    let timestamps = vm.rfc3161_timestamps();
+    if timestamps.is_empty() {
         return Ok(None);
     }
 
     let mut earliest_timestamp: Option<i64> = None;
     let mut any_timestamp_verified = false;
 
-    for ts in &bundle
-        .verification_material
-        .timestamp_verification_data
-        .rfc3161_timestamps
-    {
-        // Get the timestamp bytes
-        let ts_bytes = ts.signed_timestamp.as_bytes();
-
+    for ts_bytes in &timestamps {
         // Build verification options from trusted root
         let mut opts = TsaVerifyOpts::new();
 
@@ -119,13 +102,7 @@ pub fn extract_tsa_timestamp(
     }
 
     // If we have a trusted root and timestamps were present but none verified, that's an error
-    if !any_timestamp_verified
-        && !bundle
-            .verification_material
-            .timestamp_verification_data
-            .rfc3161_timestamps
-            .is_empty()
-    {
+    if !any_timestamp_verified && !timestamps.is_empty() {
         return Err(Error::Verification(
             "TSA timestamps present but none could be verified against trusted root".to_string(),
         ));
@@ -137,11 +114,17 @@ pub fn extract_tsa_timestamp(
 /// Check if bundle contains V2 tlog entries (hashedrekord/dsse v0.0.2)
 /// V2 entries have integrated_time=0 and require RFC3161 timestamps
 pub fn has_v2_tlog_entries(bundle: &Bundle) -> bool {
-    bundle
-        .verification_material
-        .tlog_entries
-        .iter()
-        .any(|entry| entry.kind_version.version == "0.0.2")
+    let vm = match bundle.verification_material() {
+        Some(vm) => vm,
+        None => return false,
+    };
+
+    vm.tlog_entries().any(|entry| {
+        entry
+            .version()
+            .map(|v| v == "0.0.2")
+            .unwrap_or(false)
+    })
 }
 
 /// Extract integrated time from V1 tlog entries that have inclusion promises.
@@ -153,26 +136,28 @@ pub fn has_v2_tlog_entries(bundle: &Bundle) -> bool {
 ///
 /// Returns the earliest valid integrated time if any are present.
 fn extract_v1_integrated_time_with_promise(bundle: &Bundle) -> Option<i64> {
+    let vm = bundle.verification_material()?;
     let mut earliest_time: Option<i64> = None;
 
-    for entry in &bundle.verification_material.tlog_entries {
+    for entry in vm.tlog_entries() {
         // Only V1 entries (0.0.1) with inclusion promises are valid timestamp sources
-        let is_v1 = entry.kind_version.version == "0.0.1"
-            && (entry.kind_version.kind == "hashedrekord" || entry.kind_version.kind == "dsse");
+        let version = entry.version().unwrap_or("");
+        let kind = entry.kind().unwrap_or("");
 
-        if !is_v1 || entry.inclusion_promise.is_none() {
+        let is_v1 = version == "0.0.1" && (kind == "hashedrekord" || kind == "dsse");
+
+        if !is_v1 || entry.inclusion_promise().is_none() {
             continue;
         }
 
-        if let Ok(time) = entry.integrated_time.parse::<i64>() {
-            if time > 0 {
-                if let Some(earliest) = earliest_time {
-                    if time < earliest {
-                        earliest_time = Some(time);
-                    }
-                } else {
+        let time = entry.integrated_time();
+        if time > 0 {
+            if let Some(earliest) = earliest_time {
+                if time < earliest {
                     earliest_time = Some(time);
                 }
+            } else {
+                earliest_time = Some(time);
             }
         }
     }
@@ -251,31 +236,34 @@ pub fn validate_certificate_time(validation_time: i64, cert_info: &CertificateIn
 /// Fulcio root certificate at the given verification time. It also verifies
 /// that the certificate has the CODE_SIGNING extended key usage.
 pub fn verify_certificate_chain(
-    verification_material: &VerificationMaterialContent,
+    bundle: &Bundle,
     validation_time: i64,
     trusted_root: &TrustedRoot,
 ) -> Result<()> {
+    let vm = bundle
+        .verification_material()
+        .ok_or_else(|| Error::Verification("no verification material in bundle".to_string()))?;
+
     // Extract the end-entity certificate and any intermediates from the bundle
-    let (ee_cert_der, intermediate_ders) = match verification_material {
-        VerificationMaterialContent::Certificate(cert) => {
-            (cert.raw_bytes.as_bytes().to_vec(), Vec::new())
+    let (ee_cert_der, intermediate_ders) = if let Some(cert) = vm.certificate() {
+        // Single certificate (v0.3 format)
+        (cert.as_bytes().to_vec(), Vec::new())
+    } else if let Some(certs) = vm.certificate_chain() {
+        // Certificate chain (v0.1/v0.2 format)
+        if certs.is_empty() {
+            return Err(Error::Verification("no certificates in chain".to_string()));
         }
-        VerificationMaterialContent::X509CertificateChain { certificates } => {
-            if certificates.is_empty() {
-                return Err(Error::Verification("no certificates in chain".to_string()));
-            }
-            let ee = certificates[0].raw_bytes.as_bytes().to_vec();
-            let intermediates: Vec<Vec<u8>> = certificates[1..]
-                .iter()
-                .map(|c| c.raw_bytes.as_bytes().to_vec())
-                .collect();
-            (ee, intermediates)
-        }
-        VerificationMaterialContent::PublicKey { .. } => {
-            return Err(Error::Verification(
-                "public key verification not yet supported".to_string(),
-            ));
-        }
+        let ee = certs[0].as_bytes().to_vec();
+        let intermediates: Vec<Vec<u8>> = certs[1..].iter().map(|c| c.as_bytes().to_vec()).collect();
+        (ee, intermediates)
+    } else if vm.public_key_hint().is_some() {
+        return Err(Error::Verification(
+            "public key verification not yet supported".to_string(),
+        ));
+    } else {
+        return Err(Error::Verification(
+            "no certificate or public key in verification material".to_string(),
+        ));
     };
 
     // Get Fulcio certificates from trusted root to use as trust anchors
@@ -352,15 +340,14 @@ pub fn verify_certificate_chain(
 ///
 /// This function uses the x509-cert crate's built-in SCT parsing and tls_codec
 /// for proper RFC 6962 compliant verification.
-pub fn verify_sct(
-    verification_material: &VerificationMaterialContent,
-    trusted_root: &TrustedRoot,
-) -> Result<()> {
+pub fn verify_sct(bundle: &Bundle, trusted_root: &TrustedRoot) -> Result<()> {
     // Extract certificate for verification
-    let cert = extract_certificate(verification_material)?;
+    let cert = bundle
+        .signing_certificate()
+        .ok_or_else(|| Error::Verification("no signing certificate in bundle".to_string()))?;
 
     // Get issuer SPKI for calculating the issuer key hash
-    let issuer_spki = get_issuer_spki(verification_material, &cert, trusted_root)?;
+    let issuer_spki = get_issuer_spki(bundle, &cert, trusted_root)?;
 
     // Delegate to the new sct module for verification
     super::sct::verify_sct(cert.as_bytes(), issuer_spki.as_bytes(), trusted_root)
@@ -371,7 +358,7 @@ pub fn verify_sct(
 /// This tries to find the issuer certificate in the verification material chain
 /// or in the trusted root, and returns its SPKI for SCT verification.
 fn get_issuer_spki(
-    verification_material: &VerificationMaterialContent,
+    bundle: &Bundle,
     cert: &DerCertificate,
     trusted_root: &TrustedRoot,
 ) -> Result<DerPublicKey> {
@@ -379,20 +366,20 @@ fn get_issuer_spki(
     use x509_cert::Certificate;
 
     // 1. Try to get from chain in verification material
-    if let VerificationMaterialContent::X509CertificateChain { certificates } =
-        verification_material
-    {
-        if certificates.len() > 1 {
-            let issuer_der = certificates[1].raw_bytes.as_bytes();
-            let issuer_cert = Certificate::from_der(issuer_der).map_err(|e| {
-                Error::Verification(format!("failed to parse issuer certificate: {}", e))
-            })?;
-            let spki_der = issuer_cert
-                .tbs_certificate
-                .subject_public_key_info
-                .to_der()
-                .map_err(|e| Error::Verification(format!("failed to encode issuer SPKI: {}", e)))?;
-            return Ok(DerPublicKey::new(spki_der));
+    if let Some(vm) = bundle.verification_material() {
+        if let Some(certs) = vm.certificate_chain() {
+            if certs.len() > 1 {
+                let issuer_der = certs[1].as_bytes();
+                let issuer_cert = Certificate::from_der(issuer_der).map_err(|e| {
+                    Error::Verification(format!("failed to parse issuer certificate: {}", e))
+                })?;
+                let spki_der = issuer_cert
+                    .tbs_certificate
+                    .subject_public_key_info
+                    .to_der()
+                    .map_err(|e| Error::Verification(format!("failed to encode issuer SPKI: {}", e)))?;
+                return Ok(DerPublicKey::new(spki_der));
+            }
         }
     }
 
