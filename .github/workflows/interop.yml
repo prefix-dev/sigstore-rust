@@ -113,10 +113,12 @@ jobs:
 
       - name: "[V2] Verify sigstore-rust V2 signature with cosign"
         run: |
+          # V2 bundles use RFC3161 timestamps instead of integratedTime
           cosign verify-blob \
             --bundle rust-signed-v2.sigstore.json \
             --certificate-identity-regexp ".*" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --use-signed-timestamps \
             test-artifact-v2.txt
           echo "✅ Cosign successfully verified sigstore-rust V2 signature"
 
