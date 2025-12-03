@@ -969,10 +969,7 @@ fn test_parse_cosign_v3_blob_bundle() {
     assert_eq!(entry.kind_version.version, "0.0.1");
 
     // Check it has both inclusion proof and inclusion promise
-    assert!(
-        entry.inclusion_proof.is_some(),
-        "Expected inclusion proof"
-    );
+    assert!(entry.inclusion_proof.is_some(), "Expected inclusion proof");
     assert!(
         entry.inclusion_promise.is_some(),
         "Expected inclusion promise (SET)"
@@ -991,8 +988,7 @@ fn test_verify_cosign_v3_blob_bundle() {
     // The artifact content that was signed
     let artifact = include_bytes!("../test_data/bundles/cosign-v3-blob.txt");
 
-    let policy = VerificationPolicy::default()
-        .require_issuer("https://github.com/login/oauth");
+    let policy = VerificationPolicy::default().require_issuer("https://github.com/login/oauth");
 
     let result = verify(artifact, &bundle, &policy, &production_root());
     assert!(result.is_ok(), "Verification failed: {:?}", result.err());
