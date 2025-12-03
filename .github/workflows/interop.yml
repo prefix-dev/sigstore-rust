@@ -24,6 +24,8 @@ jobs:
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v3.0.2'
 
       - name: Build release binaries
         run: cargo build --release -p sigstore-sign -p sigstore-verify --examples
@@ -74,11 +76,8 @@ jobs:
       - name: "[V1] Sign with cosign"
         run: |
           cosign version
-          # Use --new-bundle-format to produce Sigstore bundle v0.3 format
-          # (cosign v2.x defaults to legacy format without this flag)
           cosign sign-blob \
             --yes \
-            --new-bundle-format \
             --bundle cosign-signed.sigstore.json \
             test-artifact.txt
           echo "Bundle created:"
@@ -129,12 +128,10 @@ jobs:
             test-artifact-v2.txt rust-signed-v2.sigstore.json
           echo "✅ sigstore-rust successfully verified its own V2 signature"
 
-      - name: "[V2] Sign with cosign --new-bundle-format"
+      - name: "[V2] Sign with cosign"
         run: |
-          # cosign uses --new-bundle-format for v0.3 bundles with Rekor v2
           cosign sign-blob \
             --yes \
-            --new-bundle-format \
             --bundle cosign-signed-v2.sigstore.json \
             test-artifact-v2.txt
           echo "Bundle created:"
@@ -185,7 +182,6 @@ jobs:
         run: |
           cosign sign-blob \
             --yes \
-            --new-bundle-format \
             --bundle cosign-digest-bundle.sigstore.json \
             digest-test.txt
 
@@ -237,7 +233,6 @@ jobs:
 
           cosign attest-blob \
             --yes \
-            --new-bundle-format \
             --bundle cosign-attestation.sigstore.json \
             --predicate predicate.json \
             --type "https://schemas.conda.org/attestations-publish-1.schema.json" \
