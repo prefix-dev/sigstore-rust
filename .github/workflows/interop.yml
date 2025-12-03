@@ -74,15 +74,15 @@ jobs:
       - name: "[V1] Sign with cosign"
         run: |
           cosign version
+          # Use --new-bundle-format to produce Sigstore bundle v0.3 format
+          # (cosign v2.x defaults to legacy format without this flag)
           cosign sign-blob \
             --yes \
+            --new-bundle-format \
             --bundle cosign-signed.sigstore.json \
             test-artifact.txt
           echo "Bundle created:"
-          echo "File size: $(wc -c < cosign-signed.sigstore.json) bytes"
-          cat cosign-signed.sigstore.json | jq -r '.mediaType // "NO_MEDIA_TYPE"'
-          echo "Top-level keys:"
-          cat cosign-signed.sigstore.json | jq 'keys'
+          cat cosign-signed.sigstore.json | jq -r '.mediaType'
 
       - name: "[V1] Verify cosign signature with sigstore-rust"
         run: |
@@ -185,6 +185,7 @@ jobs:
         run: |
           cosign sign-blob \
             --yes \
+            --new-bundle-format \
             --bundle cosign-digest-bundle.sigstore.json \
             digest-test.txt
 
@@ -236,6 +237,7 @@ jobs:
 
           cosign attest-blob \
             --yes \
+            --new-bundle-format \
             --bundle cosign-attestation.sigstore.json \
             --predicate predicate.json \
             --type "https://schemas.conda.org/attestations-publish-1.schema.json" \
