@@ -45,7 +45,7 @@ use sigstore_fulcio::FulcioClient;
 use sigstore_oidc::{get_ambient_token, get_identity_token, is_ci_environment, IdentityToken};
 use sigstore_rekor::{DsseEntry, RekorClient};
 use sigstore_sign::SigningConfig;
-use sigstore_types::{DerCertificate, DsseEnvelope, DsseSignature, SignatureBytes};
+use sigstore_types::{DerCertificate, DsseEnvelope, DsseSignature};
 
 use std::env;
 use std::fs;

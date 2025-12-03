@@ -257,3 +257,38 @@ jobs:
             --type "https://schemas.conda.org/attestations-publish-1.schema.json" \
             test-package.txt
           echo "✅ Cosign successfully verified its own attestation"
+
+      # =========================================
+      # SIGSTORE-PYTHON: Cross-implementation verification
+      # =========================================
+      - name: Install sigstore-python
+        run: |
+          pip install sigstore
+          sigstore --version
+
+      - name: "[Python] Verify sigstore-rust V1 bundle"
+        run: |
+          sigstore verify bundle \
+            --bundle rust-signed.sigstore.json \
+            --certificate-identity ".*" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            test-artifact.txt
+          echo "✅ sigstore-python verified sigstore-rust V1 bundle"
+
+      - name: "[Python] Verify sigstore-rust V2 bundle"
+        run: |
+          sigstore verify bundle \
+            --bundle rust-signed-v2.sigstore.json \
+            --certificate-identity ".*" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            test-artifact-v2.txt
+          echo "✅ sigstore-python verified sigstore-rust V2 bundle"
+
+      - name: "[Python] Verify sigstore-rust attestation"
+        run: |
+          sigstore verify bundle \
+            --bundle rust-attestation.sigstore.json \
+            --certificate-identity ".*" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            test-package.txt
+          echo "✅ sigstore-python verified sigstore-rust attestation"
