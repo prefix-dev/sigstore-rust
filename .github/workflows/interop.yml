@@ -11,8 +11,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  interop-v1:
-    name: Interop Tests (Rekor V1)
+  interop:
+    name: Interoperability Tests
     runs-on: ubuntu-latest
     permissions:
       id-token: write  # Required for OIDC token
@@ -28,13 +28,25 @@ jobs:
       - name: Build release binaries
         run: cargo build --release -p sigstore-sign -p sigstore-verify --examples
 
-      - name: Create test artifact
+      # =========================================
+      # Setup: Create test artifacts
+      # =========================================
+      - name: Create test artifacts
         run: |
           echo "Hello from sigstore-rust interop test at $(date)" > test-artifact.txt
-          sha256sum test-artifact.txt
+          echo "Hello from sigstore-rust interop test V2 at $(date)" > test-artifact-v2.txt
+          echo "Digest-based verification test at $(date)" > digest-test.txt
+          echo "Test package content for attestation at $(date)" > test-package.txt
+
+          echo "Test artifacts created:"
+          sha256sum test-artifact.txt test-artifact-v2.txt digest-test.txt test-package.txt
+
+          # Store digest for later use
+          DIGEST=$(sha256sum digest-test.txt | cut -d' ' -f1)
+          echo "ARTIFACT_DIGEST=sha256:${DIGEST}" >> $GITHUB_ENV
 
       # =========================================
-      # Test 1: Sign with sigstore-rust, verify with cosign
+      # REKOR V1: Blob Signing Tests
       # =========================================
       - name: "[V1] Sign with sigstore-rust"
         run: |
@@ -51,9 +63,6 @@ jobs:
             test-artifact.txt
           echo "✅ Cosign successfully verified sigstore-rust signature (V1)"
 
-      # =========================================
-      # Test 2: Sign with sigstore-rust, verify with sigstore-rust
-      # =========================================
       - name: "[V1] Verify sigstore-rust signature with sigstore-rust"
         run: |
           ./target/release/examples/verify_bundle \
@@ -62,9 +71,6 @@ jobs:
             test-artifact.txt rust-signed.sigstore.json
           echo "✅ sigstore-rust successfully verified its own signature (V1)"
 
-      # =========================================
-      # Test 3: Sign with cosign, verify with sigstore-rust
-      # =========================================
       - name: "[V1] Sign with cosign"
         run: |
           cosign sign-blob \
@@ -82,9 +88,6 @@ jobs:
             test-artifact.txt cosign-signed.sigstore.json
           echo "✅ sigstore-rust successfully verified cosign signature (V1)"
 
-      # =========================================
-      # Test 4: Cross-verify cosign signature with cosign (sanity check)
-      # =========================================
       - name: "[V1] Verify cosign signature with cosign (sanity check)"
         run: |
           cosign verify-blob \
@@ -94,30 +97,8 @@ jobs:
             test-artifact.txt
           echo "✅ Cosign successfully verified its own signature (V1)"
 
-  interop-v2:
-    name: Interop Tests (Rekor V2)
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write  # Required for OIDC token
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@1.89.0
-
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3
-
-      - name: Build release binaries
-        run: cargo build --release -p sigstore-sign -p sigstore-verify --examples
-
-      - name: Create test artifact
-        run: |
-          echo "Hello from sigstore-rust interop test V2 at $(date)" > test-artifact-v2.txt
-          sha256sum test-artifact-v2.txt
-
       # =========================================
-      # Test 1: Sign with sigstore-rust (V2), verify with cosign
+      # REKOR V2: Blob Signing Tests
       # =========================================
       - name: "[V2] Sign with sigstore-rust --v2"
         run: |
@@ -136,9 +117,6 @@ jobs:
             test-artifact-v2.txt
           echo "✅ Cosign successfully verified sigstore-rust V2 signature"
 
-      # =========================================
-      # Test 2: Sign with sigstore-rust (V2), verify with sigstore-rust
-      # =========================================
       - name: "[V2] Verify sigstore-rust V2 signature with sigstore-rust"
         run: |
           ./target/release/examples/verify_bundle \
@@ -147,9 +125,6 @@ jobs:
             test-artifact-v2.txt rust-signed-v2.sigstore.json
           echo "✅ sigstore-rust successfully verified its own V2 signature"
 
-      # =========================================
-      # Test 3: Sign with cosign (V2), verify with sigstore-rust
-      # =========================================
       - name: "[V2] Sign with cosign --new-bundle-format"
         run: |
           # cosign uses --new-bundle-format for v0.3 bundles with Rekor v2
@@ -169,9 +144,6 @@ jobs:
             test-artifact-v2.txt cosign-signed-v2.sigstore.json
           echo "✅ sigstore-rust successfully verified cosign V2 signature"
 
-      # =========================================
-      # Test 4: Cross-verify cosign V2 signature with cosign (sanity check)
-      # =========================================
       - name: "[V2] Verify cosign V2 signature with cosign (sanity check)"
         run: |
           cosign verify-blob \
@@ -181,38 +153,14 @@ jobs:
             test-artifact-v2.txt
           echo "✅ Cosign successfully verified its own V2 signature"
 
-  interop-digest:
-    name: Interop Tests (Digest-based verification)
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@1.89.0
-
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3
-
-      - name: Build release binaries
-        run: cargo build --release -p sigstore-sign -p sigstore-verify --examples
-
-      - name: Create test artifact and compute digest
-        run: |
-          echo "Digest-based verification test at $(date)" > digest-test.txt
-          DIGEST=$(sha256sum digest-test.txt | cut -d' ' -f1)
-          echo "ARTIFACT_DIGEST=sha256:${DIGEST}" >> $GITHUB_ENV
-          echo "Artifact digest: sha256:${DIGEST}"
-
       # =========================================
-      # Sign with sigstore-rust, verify with digest only
+      # DIGEST: Digest-based Verification Tests
       # =========================================
-      - name: Sign with sigstore-rust
+      - name: "[Digest] Sign with sigstore-rust"
         run: |
           ./target/release/examples/sign_blob digest-test.txt -o digest-bundle.sigstore.json
 
-      - name: Verify with cosign using digest
+      - name: "[Digest] Verify with cosign using digest"
         run: |
           cosign verify-blob \
             --bundle digest-bundle.sigstore.json \
@@ -221,7 +169,7 @@ jobs:
             ${{ env.ARTIFACT_DIGEST }}
           echo "✅ Cosign verified using digest"
 
-      - name: Verify with sigstore-rust using digest
+      - name: "[Digest] Verify with sigstore-rust using digest"
         run: |
           ./target/release/examples/verify_bundle \
             --certificate-identity-regexp ".*" \
@@ -229,17 +177,14 @@ jobs:
             ${{ env.ARTIFACT_DIGEST }} digest-bundle.sigstore.json
           echo "✅ sigstore-rust verified using digest"
 
-      # =========================================
-      # Sign with cosign, verify with sigstore-rust using digest
-      # =========================================
-      - name: Sign with cosign
+      - name: "[Digest] Sign with cosign"
         run: |
           cosign sign-blob \
             --yes \
             --bundle cosign-digest-bundle.sigstore.json \
             digest-test.txt
 
-      - name: Verify cosign bundle with sigstore-rust using digest
+      - name: "[Digest] Verify cosign bundle with sigstore-rust using digest"
         run: |
           ./target/release/examples/verify_bundle \
             --certificate-identity-regexp ".*" \
@@ -247,30 +192,8 @@ jobs:
             ${{ env.ARTIFACT_DIGEST }} cosign-digest-bundle.sigstore.json
           echo "✅ sigstore-rust verified cosign bundle using digest"
 
-  interop-attestation:
-    name: Interop Tests (Attestations / DSSE)
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write  # Required for OIDC token
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@1.89.0
-
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3
-
-      - name: Build release binaries
-        run: cargo build --release -p sigstore-sign -p sigstore-verify --examples
-
-      - name: Create test artifact
-        run: |
-          echo "Test package content for attestation at $(date)" > test-package.txt
-          sha256sum test-package.txt
-
       # =========================================
-      # Test 1: Attest with sigstore-rust, verify with cosign
+      # DSSE: Attestation Tests
       # =========================================
       - name: "[DSSE] Attest with sigstore-rust"
         run: |
@@ -292,22 +215,15 @@ jobs:
             test-package.txt
           echo "✅ Cosign successfully verified sigstore-rust attestation"
 
-      # =========================================
-      # Test 2: Attest with sigstore-rust, verify with sigstore-rust
-      # =========================================
       - name: "[DSSE] Verify sigstore-rust attestation with sigstore-rust"
         run: |
           ./target/release/examples/verify_conda_attestation \
             test-package.txt rust-attestation.sigstore.json
           echo "✅ sigstore-rust successfully verified its own attestation"
 
-      # =========================================
-      # Test 3: Attest with cosign, verify with sigstore-rust
-      # =========================================
       - name: "[DSSE] Attest with cosign"
         run: |
-          # Create an in-toto statement for cosign
-          DIGEST=$(sha256sum test-package.txt | cut -d' ' -f1)
+          # Create a predicate for cosign
           cat > predicate.json << EOF
           {
             "targetChannel": "https://example.com/cosign-test-channel"
@@ -329,9 +245,6 @@ jobs:
             test-package.txt cosign-attestation.sigstore.json
           echo "✅ sigstore-rust successfully verified cosign attestation"
 
-      # =========================================
-      # Test 4: Cross-verify cosign attestation with cosign (sanity check)
-      # =========================================
       - name: "[DSSE] Verify cosign attestation with cosign (sanity check)"
         run: |
           cosign verify-blob-attestation \
