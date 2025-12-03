@@ -356,6 +356,11 @@ pub struct Rfc3161Timestamp {
     pub signed_timestamp: TimestampToken,
 }
 
+/// Default media type for bundles that don't specify one (pre-v0.1 format)
+fn default_media_type() -> String {
+    "application/vnd.dev.sigstore.bundle+json;version=0.1".to_string()
+}
+
 // Custom Deserialize implementation for Bundle
 impl<'de> Deserialize<'de> for Bundle {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
@@ -365,6 +370,8 @@ impl<'de> Deserialize<'de> for Bundle {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct BundleHelper {
+            // Cosign V1 bundles may not have mediaType - default to v0.1
+            #[serde(default = "default_media_type")]
             media_type: String,
             verification_material: VerificationMaterial,
             #[serde(flatten)]
