@@ -1,0 +1,3 @@
+# Preserve line endings in test data files (hashes depend on exact content)
+**/test_data/** binary
+**/fixtures/** binary
