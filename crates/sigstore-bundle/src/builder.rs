@@ -133,11 +133,11 @@ impl BundleV03 {
 
 /// Helper to create a transparency log entry.
 pub struct TlogEntryBuilder {
-    log_index: u64,
+    log_index: i64,
     log_id: String,
     kind: String,
     kind_version: String,
-    integrated_time: u64,
+    integrated_time: i64,
     canonicalized_body: Vec<u8>,
     inclusion_promise: Option<InclusionPromise>,
     inclusion_proof: Option<InclusionProof>,
@@ -175,11 +175,11 @@ impl TlogEntryBuilder {
             .unwrap_or_else(|_| entry.log_id.to_string());
 
         let mut builder = Self {
-            log_index: entry.log_index as u64,
+            log_index: entry.log_index,
             log_id: log_id_base64,
             kind: kind.to_string(),
             kind_version: version.to_string(),
-            integrated_time: entry.integrated_time as u64,
+            integrated_time: entry.integrated_time,
             canonicalized_body: entry.body.as_bytes().to_vec(),
             inclusion_promise: None,
             inclusion_proof: None,
@@ -222,13 +222,13 @@ impl TlogEntryBuilder {
     }
 
     /// Set the log index.
-    pub fn log_index(mut self, index: u64) -> Self {
+    pub fn log_index(mut self, index: i64) -> Self {
         self.log_index = index;
         self
     }
 
     /// Set the integrated time (Unix timestamp).
-    pub fn integrated_time(mut self, time: u64) -> Self {
+    pub fn integrated_time(mut self, time: i64) -> Self {
         self.integrated_time = time;
         self
     }
@@ -251,16 +251,16 @@ impl TlogEntryBuilder {
     /// * `checkpoint` - The checkpoint envelope
     pub fn inclusion_proof(
         mut self,
-        log_index: u64,
+        log_index: i64,
         root_hash: Sha256Hash,
-        tree_size: u64,
+        tree_size: i64,
         hashes: Vec<Sha256Hash>,
         checkpoint: String,
     ) -> Self {
         self.inclusion_proof = Some(InclusionProof {
             log_index: LogIndex::from(log_index),
             root_hash,
-            tree_size: tree_size as i64,
+            tree_size,
             hashes,
             checkpoint: CheckpointData {
                 envelope: checkpoint,
@@ -280,7 +280,7 @@ impl TlogEntryBuilder {
                 kind: self.kind,
                 version: self.kind_version,
             },
-            integrated_time: self.integrated_time as i64,
+            integrated_time: self.integrated_time,
             inclusion_promise: self.inclusion_promise,
             inclusion_proof: self.inclusion_proof,
             canonicalized_body: CanonicalizedBody::new(self.canonicalized_body),
