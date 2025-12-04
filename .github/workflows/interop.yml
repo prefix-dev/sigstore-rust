@@ -268,27 +268,32 @@ jobs:
 
       - name: "[Python] Verify sigstore-rust V1 bundle"
         run: |
+          # GitHub Actions identity is the workflow file URL
+          IDENTITY="https://github.com/${{ github.repository }}/.github/workflows/interop.yml@${{ github.ref }}"
+          echo "Expected identity: $IDENTITY"
           sigstore verify identity \
             --bundle rust-signed.sigstore.json \
-            --cert-identity ".*" \
+            --cert-identity "$IDENTITY" \
             --cert-oidc-issuer "https://token.actions.githubusercontent.com" \
             test-artifact.txt
           echo "✅ sigstore-python verified sigstore-rust V1 bundle"
 
       - name: "[Python] Verify sigstore-rust V2 bundle"
         run: |
+          IDENTITY="https://github.com/${{ github.repository }}/.github/workflows/interop.yml@${{ github.ref }}"
           sigstore verify identity \
             --bundle rust-signed-v2.sigstore.json \
-            --cert-identity ".*" \
+            --cert-identity "$IDENTITY" \
             --cert-oidc-issuer "https://token.actions.githubusercontent.com" \
             test-artifact-v2.txt
           echo "✅ sigstore-python verified sigstore-rust V2 bundle"
 
       - name: "[Python] Verify sigstore-rust attestation"
         run: |
+          IDENTITY="https://github.com/${{ github.repository }}/.github/workflows/interop.yml@${{ github.ref }}"
           sigstore verify identity \
             --bundle rust-attestation.sigstore.json \
-            --cert-identity ".*" \
+            --cert-identity "$IDENTITY" \
             --cert-oidc-issuer "https://token.actions.githubusercontent.com" \
             test-package.txt
           echo "✅ sigstore-python verified sigstore-rust attestation"
