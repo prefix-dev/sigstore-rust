@@ -268,27 +268,42 @@ jobs:
 
       - name: "[Python] Verify sigstore-rust V1 bundle"
         run: |
-          sigstore verify bundle \
+          sigstore verify identity \
             --bundle rust-signed.sigstore.json \
-            --certificate-identity ".*" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --cert-identity ".*" \
+            --cert-oidc-issuer "https://token.actions.githubusercontent.com" \
             test-artifact.txt
           echo "✅ sigstore-python verified sigstore-rust V1 bundle"
 
       - name: "[Python] Verify sigstore-rust V2 bundle"
         run: |
-          sigstore verify bundle \
+          sigstore verify identity \
             --bundle rust-signed-v2.sigstore.json \
-            --certificate-identity ".*" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --cert-identity ".*" \
+            --cert-oidc-issuer "https://token.actions.githubusercontent.com" \
             test-artifact-v2.txt
           echo "✅ sigstore-python verified sigstore-rust V2 bundle"
 
       - name: "[Python] Verify sigstore-rust attestation"
         run: |
-          sigstore verify bundle \
+          sigstore verify identity \
             --bundle rust-attestation.sigstore.json \
-            --certificate-identity ".*" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --cert-identity ".*" \
+            --cert-oidc-issuer "https://token.actions.githubusercontent.com" \
             test-package.txt
           echo "✅ sigstore-python verified sigstore-rust attestation"
+
+      # =========================================
+      # BUNDLE FORMAT: Structural compatibility checks
+      # =========================================
+      - name: "[Format] Check sigstore-rust V1 bundle format"
+        run: python scripts/compare_bundles.py --check rust-signed.sigstore.json
+
+      - name: "[Format] Check sigstore-rust V2 bundle format"
+        run: python scripts/compare_bundles.py --check rust-signed-v2.sigstore.json
+
+      - name: "[Format] Compare V1 bundles (sigstore-rust vs cosign)"
+        run: python scripts/compare_bundles.py rust-signed.sigstore.json cosign-signed.sigstore.json
+
+      - name: "[Format] Compare attestation bundles (sigstore-rust vs cosign)"
+        run: python scripts/compare_bundles.py rust-attestation.sigstore.json cosign-attestation.sigstore.json
