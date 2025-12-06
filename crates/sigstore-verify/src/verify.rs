@@ -364,6 +364,20 @@ impl Verifier {
                 }
             }
         }
+
+        // For MessageSignature bundles, verify the messageDigest matches the artifact
+        if let SignatureContent::MessageSignature(msg_sig) = &bundle.content {
+            if let Some(ref digest) = msg_sig.message_digest {
+                let artifact_hash = compute_artifact_digest(&artifact);
+
+                // Compare the digest in the bundle with the computed artifact hash
+                if digest.digest.as_bytes() != artifact_hash.as_bytes() {
+                    return Err(Error::Verification(
+                        "message digest in bundle does not match artifact hash".to_string(),
+                    ));
+                }
+            }
+        }
         // Note: For hashedrekord (MessageSignature), the signature verification
         // is performed in step (8) by verify_hashedrekord_entries, which properly
         // handles prehashed signatures.

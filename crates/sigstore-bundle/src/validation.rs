@@ -53,6 +53,9 @@ fn validate_v0_1(bundle: &Bundle, options: &ValidationOptions) -> Result<()> {
         ));
     }
 
+    // Validate inclusion proofs if present (v0.1 may have both promise and proof)
+    validate_inclusion_proofs(bundle)?;
+
     // Common validation
     validate_common(bundle, options)
 }
