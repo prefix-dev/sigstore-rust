@@ -69,7 +69,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.89.0
 
       - name: Build binaries
-        run: cargo build --release --package sigstore-conformance --example verify_bundle
+        run: |
+          cargo build --release --package sigstore-conformance
+          cargo build --release --example verify_bundle
 
       - uses: sigstore/sigstore-conformance@main
         with:
