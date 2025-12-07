@@ -17,7 +17,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 license = "BSD-3-Clause"
 repository = "https://github.com/wolfv/sigstore-rust"
@@ -87,15 +87,15 @@ futures = "0.3"
 directories = "6.0"
 
 # Internal crates (path + version for publishing)
-sigstore-types = { path = "crates/sigstore-types", version = "0.5.0" }
-sigstore-crypto = { path = "crates/sigstore-crypto", version = "0.5.0" }
-sigstore-merkle = { path = "crates/sigstore-merkle", version = "0.5.0" }
-sigstore-tsa = { path = "crates/sigstore-tsa", version = "0.5.0" }
-sigstore-trust-root = { path = "crates/sigstore-trust-root", version = "0.5.0" }
-sigstore-bundle = { path = "crates/sigstore-bundle", version = "0.5.0" }
-sigstore-rekor = { path = "crates/sigstore-rekor", version = "0.5.0" }
-sigstore-fulcio = { path = "crates/sigstore-fulcio", version = "0.5.0" }
-sigstore-oidc = { path = "crates/sigstore-oidc", version = "0.5.0" }
-sigstore-cache = { path = "crates/sigstore-cache", version = "0.5.0" }
-sigstore-verify = { path = "crates/sigstore-verify", version = "0.5.0" }
-sigstore-sign = { path = "crates/sigstore-sign", version = "0.5.0" }
+sigstore-types = { path = "crates/sigstore-types", version = "0.6.0" }
+sigstore-crypto = { path = "crates/sigstore-crypto", version = "0.6.0" }
+sigstore-merkle = { path = "crates/sigstore-merkle", version = "0.6.0" }
+sigstore-tsa = { path = "crates/sigstore-tsa", version = "0.6.0" }
+sigstore-trust-root = { path = "crates/sigstore-trust-root", version = "0.6.0" }
+sigstore-bundle = { path = "crates/sigstore-bundle", version = "0.6.0" }
+sigstore-rekor = { path = "crates/sigstore-rekor", version = "0.6.0" }
+sigstore-fulcio = { path = "crates/sigstore-fulcio", version = "0.6.0" }
+sigstore-oidc = { path = "crates/sigstore-oidc", version = "0.6.0" }
+sigstore-cache = { path = "crates/sigstore-cache", version = "0.6.0" }
+sigstore-verify = { path = "crates/sigstore-verify", version = "0.6.0" }
+sigstore-sign = { path = "crates/sigstore-sign", version = "0.6.0" }
