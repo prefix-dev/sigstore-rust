@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/wolfv/sigstore-rust/compare/sigstore-bundle-v0.5.0...sigstore-bundle-v0.6.0) - 2025-12-08
+
+### Added
+
+- add fuzzing tests ([#13](https://github.com/wolfv/sigstore-rust/pull/13))
+
+### Other
+
+- improve types and add interop test workflow ([#9](https://github.com/wolfv/sigstore-rust/pull/9))
+
 ## [0.5.0](https://github.com/wolfv/sigstore-rust/compare/sigstore-bundle-v0.4.0...sigstore-bundle-v0.5.0) - 2025-12-01
 
 ### Added
