@@ -78,7 +78,7 @@ jobs:
           entrypoint: ./target/release/conformance
 
       - name: Upload verify_bundle binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: verify_bundle
           path: target/release/examples/verify_bundle
@@ -95,7 +95,7 @@ jobs:
           python-version: '3.14'
 
       - name: Download verify_bundle binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: verify_bundle
           path: target/release/examples
