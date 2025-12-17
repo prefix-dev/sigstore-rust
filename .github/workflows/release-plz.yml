@@ -10,6 +10,7 @@ jobs:
   release-plz-release:
     name: Release-plz release
     runs-on: ubuntu-latest
+    environment: crates-io
     # Prevent multiple releases from running at the same time
     concurrency:
       group: release-plz-release
