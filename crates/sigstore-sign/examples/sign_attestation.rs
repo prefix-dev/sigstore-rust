@@ -39,7 +39,7 @@
 //!     crates/sigstore-verify/test_data/bundles/signed-package-2.1.0-hb0f4dca_0.conda
 //! ```
 
-use sigstore_oidc::{get_ambient_token, get_identity_token, is_ci_environment, IdentityToken};
+use sigstore_oidc::{get_identity_token, IdentityToken};
 use sigstore_sign::{Attestation, SigningConfig, SigningContext};
 
 use std::env;
@@ -245,11 +245,10 @@ async fn get_token(explicit_token: Option<String>) -> Result<IdentityToken, Stri
         return IdentityToken::from_jwt(&token_str).map_err(|e| format!("Invalid token: {}", e));
     }
 
-    if is_ci_environment() {
+    // Try ambient credentials (CI/CD environments)
+    if let Ok(token) = IdentityToken::detect_ambient().await {
         println!("  Detected CI environment, using ambient credentials");
-        return get_ambient_token()
-            .await
-            .map_err(|e| format!("Failed to get ambient token: {}", e));
+        return Ok(token);
     }
 
     println!("  Starting interactive authentication...");
