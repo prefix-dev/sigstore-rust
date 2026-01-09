@@ -246,7 +246,10 @@ async fn get_token(explicit_token: Option<String>) -> Result<IdentityToken, Stri
     }
 
     // Try ambient credentials (CI/CD environments)
-    if let Ok(token) = IdentityToken::detect_ambient().await {
+    if let Some(token) = IdentityToken::detect_ambient()
+        .await
+        .map_err(|e| e.to_string())?
+    {
         println!("  Detected CI environment, using ambient credentials");
         return Ok(token);
     }

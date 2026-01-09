@@ -100,10 +100,10 @@ impl IdentityToken {
     ///
     /// This attempts to find OIDC credentials in environments like GitHub Actions,
     /// GitLab CI, Buildkite, etc. using the `ambient-id` crate.
-    pub async fn detect_ambient() -> Result<Self> {
+    pub async fn detect_ambient() -> Result<Option<Self>> {
         match Detector::new().detect("sigstore").await {
-            Ok(Some(token)) => Self::from_jwt(&token.reveal()),
-            Ok(None) => Err(Error::Token("no ambient OIDC credentials detected".to_string())),
+            Ok(Some(token)) => Self::from_jwt(&token.reveal()).map(Some),
+            Ok(None) => Ok(None),
             Err(e) => Err(Error::Token(format!(
                 "failed to detect ambient credentials: {}",
                 e
