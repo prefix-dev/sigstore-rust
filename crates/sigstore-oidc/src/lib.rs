@@ -8,7 +8,10 @@ pub mod error;
 pub mod oauth;
 pub mod token;
 
-pub use ambient::{detect_environment, get_ambient_token, is_ci_environment, CiEnvironment};
+pub use ambient::{
+    detect_environment, get_ambient_token, get_ambient_token_with_audience, is_ci_environment,
+    CiEnvironment, SIGSTORE_AUDIENCE,
+};
 pub use error::{Error, Result};
 pub use oauth::{get_identity_token, DeviceCodeResponse, OAuthClient, OAuthConfig};
 pub use token::{issuers, Audience, FederatedClaims, IdentityToken, TokenClaims};

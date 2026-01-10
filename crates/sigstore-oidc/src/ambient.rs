@@ -1,10 +1,18 @@
 //! Ambient credential detection for CI/CD environments
 //!
 //! This module provides detection and retrieval of OIDC tokens from
-//! various CI/CD environments like GitHub Actions, GitLab CI, etc.
+//! various CI/CD environments like GitHub Actions, GitLab CI, BuildKite, etc.
+//!
+//! It uses the [`ambient_id`] crate which provides robust support for:
+//! - GitHub Actions (requires `id-token: write` permission)
+//! - GitLab CI (using `<AUDIENCE>_ID_TOKEN` environment variables)
+//! - BuildKite (using `buildkite-agent` command)
 
 use crate::error::{Error, Result};
 use crate::token::IdentityToken;
+
+/// Default audience for Sigstore OIDC tokens
+pub const SIGSTORE_AUDIENCE: &str = "sigstore";
 
 /// Detected CI/CD environment
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,95 +21,129 @@ pub enum CiEnvironment {
     GitHubActions,
     /// GitLab CI
     GitLabCi,
-    /// Google Cloud Build
-    GoogleCloudBuild,
     /// Buildkite
     Buildkite,
-    /// CircleCI
-    CircleCi,
+}
+
+impl std::fmt::Display for CiEnvironment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CiEnvironment::GitHubActions => write!(f, "GitHub Actions"),
+            CiEnvironment::GitLabCi => write!(f, "GitLab CI"),
+            CiEnvironment::Buildkite => write!(f, "Buildkite"),
+        }
+    }
 }
 
 /// Detect the current CI/CD environment
+///
+/// Returns the detected CI environment, or `None` if not running in a
+/// supported CI/CD environment.
+///
+/// # Supported environments
+///
+/// - **GitHub Actions**: Detected via `GITHUB_ACTIONS` environment variable
+/// - **GitLab CI**: Detected via `GITLAB_CI` environment variable
+/// - **Buildkite**: Detected via `BUILDKITE` environment variable
 pub fn detect_environment() -> Option<CiEnvironment> {
     if std::env::var("GITHUB_ACTIONS").is_ok() {
         Some(CiEnvironment::GitHubActions)
     } else if std::env::var("GITLAB_CI").is_ok() {
         Some(CiEnvironment::GitLabCi)
-    } else if std::env::var("BUILDER_OUTPUT").is_ok() {
-        Some(CiEnvironment::GoogleCloudBuild)
     } else if std::env::var("BUILDKITE").is_ok() {
         Some(CiEnvironment::Buildkite)
-    } else if std::env::var("CIRCLECI").is_ok() {
-        Some(CiEnvironment::CircleCi)
     } else {
         None
     }
 }
 
 /// Get an ambient identity token from the current environment
+///
+/// This function attempts to retrieve an OIDC token from the current CI/CD
+/// environment. It uses the default Sigstore audience (`"sigstore"`).
+///
+/// # Supported environments
+///
+/// - **GitHub Actions**: Requests token from the Actions OIDC provider
+///   (requires `id-token: write` permission in workflow)
+/// - **GitLab CI**: Retrieves token from `SIGSTORE_ID_TOKEN` environment variable
+///   (requires `id_tokens` configuration in `.gitlab-ci.yml`)
+/// - **Buildkite**: Uses `buildkite-agent oidc request-token` command
+///
+/// # Example
+///
+/// ```no_run
+/// use sigstore_oidc::{get_ambient_token, is_ci_environment};
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// if is_ci_environment() {
+///     let token = get_ambient_token().await?;
+///     println!("Got token for: {}", token.subject());
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - No CI/CD environment is detected
+/// - The environment is detected but token retrieval fails
+/// - The retrieved token is not a valid JWT
 pub async fn get_ambient_token() -> Result<IdentityToken> {
-    match detect_environment() {
-        Some(CiEnvironment::GitHubActions) => get_github_actions_token().await,
-        Some(CiEnvironment::GitLabCi) => get_gitlab_ci_token().await,
-        Some(env) => Err(Error::Token(format!(
-            "ambient token retrieval not implemented for {:?}",
-            env
-        ))),
-        None => Err(Error::Token("no CI/CD environment detected".to_string())),
-    }
+    get_ambient_token_with_audience(SIGSTORE_AUDIENCE).await
 }
 
-/// Get OIDC token from GitHub Actions
-async fn get_github_actions_token() -> Result<IdentityToken> {
-    // GitHub Actions provides OIDC tokens through the ACTIONS_ID_TOKEN_REQUEST_URL
-    let request_url = std::env::var("ACTIONS_ID_TOKEN_REQUEST_URL")
-        .map_err(|_| Error::Token("ACTIONS_ID_TOKEN_REQUEST_URL not set".to_string()))?;
+/// Get an ambient identity token with a custom audience
+///
+/// Similar to [`get_ambient_token`], but allows specifying a custom audience
+/// for the OIDC token request.
+///
+/// # Arguments
+///
+/// * `audience` - The audience claim for the OIDC token (e.g., "sigstore")
+///
+/// # Example
+///
+/// ```no_run
+/// use sigstore_oidc::get_ambient_token_with_audience;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let token = get_ambient_token_with_audience("my-custom-audience").await?;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn get_ambient_token_with_audience(audience: &str) -> Result<IdentityToken> {
+    let detector = ambient_id::Detector::new();
 
-    let request_token = std::env::var("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
-        .map_err(|_| Error::Token("ACTIONS_ID_TOKEN_REQUEST_TOKEN not set".to_string()))?;
-
-    // Request the token with sigstore audience
-    let url = format!("{}&audience=sigstore", request_url);
-
-    let client = reqwest::Client::new();
-    let response = client
-        .get(&url)
-        .header("Authorization", format!("bearer {}", request_token))
-        .send()
+    let id_token = detector
+        .detect(audience)
         .await
-        .map_err(|e| Error::Http(e.to_string()))?;
+        .map_err(|e| Error::Token(format!("failed to detect ambient credentials: {}", e)))?
+        .ok_or_else(|| Error::Token("no ambient credentials detected".to_string()))?;
 
-    if !response.status().is_success() {
-        return Err(Error::Token(format!(
-            "GitHub Actions returned status {}",
-            response.status()
-        )));
-    }
+    // Extract the token string from the SecretString
+    let token_str = id_token.reveal();
 
-    #[derive(serde::Deserialize)]
-    struct TokenResponse {
-        value: String,
-    }
-
-    let token_response: TokenResponse = response
-        .json()
-        .await
-        .map_err(|e| Error::Token(format!("failed to parse token response: {}", e)))?;
-
-    IdentityToken::from_jwt(&token_response.value)
-}
-
-/// Get OIDC token from GitLab CI
-async fn get_gitlab_ci_token() -> Result<IdentityToken> {
-    // GitLab CI provides the token in CI_JOB_JWT_V2 or CI_JOB_JWT
-    let token = std::env::var("CI_JOB_JWT_V2")
-        .or_else(|_| std::env::var("CI_JOB_JWT"))
-        .map_err(|_| Error::Token("CI_JOB_JWT_V2 or CI_JOB_JWT not set".to_string()))?;
-
-    IdentityToken::from_jwt(&token)
+    IdentityToken::from_jwt(token_str)
 }
 
 /// Check if we're running in a supported CI/CD environment
+///
+/// This is a convenience function that returns `true` if [`detect_environment`]
+/// would return `Some(_)`.
+///
+/// # Example
+///
+/// ```
+/// use sigstore_oidc::is_ci_environment;
+///
+/// if is_ci_environment() {
+///     println!("Running in CI/CD");
+/// } else {
+///     println!("Not in CI/CD, will use interactive auth");
+/// }
+/// ```
 pub fn is_ci_environment() -> bool {
     detect_environment().is_some()
 }
@@ -117,5 +159,12 @@ mod tests {
         let env = detect_environment();
         // Just verify it doesn't panic
         let _ = env;
+    }
+
+    #[test]
+    fn test_ci_environment_display() {
+        assert_eq!(CiEnvironment::GitHubActions.to_string(), "GitHub Actions");
+        assert_eq!(CiEnvironment::GitLabCi.to_string(), "GitLab CI");
+        assert_eq!(CiEnvironment::Buildkite.to_string(), "Buildkite");
     }
 }

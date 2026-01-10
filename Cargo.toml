@@ -83,6 +83,9 @@ tough = { version = "0.21", features = ["http"] }
 # Async utilities
 futures = "0.3"
 
+# Ambient OIDC credentials
+ambient-id = "0.0.7"
+
 # Directory utilities
 directories = "6.0"
 
