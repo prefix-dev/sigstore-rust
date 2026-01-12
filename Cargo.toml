@@ -85,6 +85,7 @@ futures = "0.3"
 
 # Ambient OIDC credentials
 ambient-id = "0.0.7"
+secrecy = "0.10"
 
 # Directory utilities
 directories = "6.0"

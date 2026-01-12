@@ -1788,6 +1788,7 @@ dependencies = [
  "base64",
  "rand",
  "reqwest",
+ "secrecy",
  "serde",
  "serde_json",
  "sigstore-crypto",

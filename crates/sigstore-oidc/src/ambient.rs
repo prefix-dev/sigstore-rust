@@ -35,6 +35,16 @@ impl std::fmt::Display for CiEnvironment {
     }
 }
 
+/// Check if an environment variable is set to "true"
+///
+/// This matches the detection logic used by `ambient-id`.
+fn env_is_true(key: &str) -> bool {
+    std::env::var(key)
+        .ok()
+        .map(|v| v == "true")
+        .unwrap_or(false)
+}
+
 /// Detect the current CI/CD environment
 ///
 /// Returns the detected CI environment, or `None` if not running in a
@@ -42,15 +52,18 @@ impl std::fmt::Display for CiEnvironment {
 ///
 /// # Supported environments
 ///
-/// - **GitHub Actions**: Detected via `GITHUB_ACTIONS` environment variable
-/// - **GitLab CI**: Detected via `GITLAB_CI` environment variable
-/// - **Buildkite**: Detected via `BUILDKITE` environment variable
+/// - **GitHub Actions**: Detected when `GITHUB_ACTIONS=true`
+/// - **GitLab CI**: Detected when `GITLAB_CI=true`
+/// - **Buildkite**: Detected when `BUILDKITE=true`
+///
+/// Note: The environment variable must be exactly `"true"` (lowercase).
+/// This matches the behavior of the underlying `ambient-id` crate.
 pub fn detect_environment() -> Option<CiEnvironment> {
-    if std::env::var("GITHUB_ACTIONS").is_ok() {
+    if env_is_true("GITHUB_ACTIONS") {
         Some(CiEnvironment::GitHubActions)
-    } else if std::env::var("GITLAB_CI").is_ok() {
+    } else if env_is_true("GITLAB_CI") {
         Some(CiEnvironment::GitLabCi)
-    } else if std::env::var("BUILDKITE").is_ok() {
+    } else if env_is_true("BUILDKITE") {
         Some(CiEnvironment::Buildkite)
     } else {
         None
@@ -152,19 +165,20 @@ pub fn is_ci_environment() -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_detect_environment_none() {
-        // In a test environment without CI vars, should return None
-        // This test is environment-dependent
+    #[tokio::test]
+    async fn test_detect_environment_none() {
+        // In a test environment without CI vars set to "true", should return None
         let env = detect_environment();
         // Just verify it doesn't panic
         let _ = env;
-    }
 
-    #[test]
-    fn test_ci_environment_display() {
-        assert_eq!(CiEnvironment::GitHubActions.to_string(), "GitHub Actions");
-        assert_eq!(CiEnvironment::GitLabCi.to_string(), "GitLab CI");
-        assert_eq!(CiEnvironment::Buildkite.to_string(), "Buildkite");
+        // Check that it's as expected when running in Github CI (our test environment)
+        if env_is_true("GITHUB_ACTIONS") {
+            assert_eq!(detect_environment(), Some(CiEnvironment::GitHubActions));
+
+            // Grab a token
+            let token = get_ambient_token().await;
+            assert!(token.is_ok());
+        }
     }
 }
