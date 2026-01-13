@@ -2,13 +2,21 @@
 
 use crate::error::{Error, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 
 /// An OIDC identity token
-#[derive(Debug, Clone)]
+///
+/// This type wraps a JWT token string and provides access to its claims.
+/// The raw token is stored securely using [`SecretString`] which ensures
+/// zero-on-drop semantics.
+///
+/// To access the raw token value, use [`reveal()`](Self::reveal) which
+/// makes secret access explicit.
+#[derive(Debug)]
 pub struct IdentityToken {
-    /// The raw JWT token
-    raw: String,
+    /// The raw JWT token (secret)
+    raw: SecretString,
     /// Parsed claims
     claims: TokenClaims,
 }
@@ -90,16 +98,16 @@ impl IdentityToken {
             .map_err(|e| Error::Token(format!("failed to parse claims: {}", e)))?;
 
         Ok(Self {
-            raw: token.to_string(),
+            raw: SecretString::from(token.to_string()),
             claims,
         })
     }
 
     /// Create from raw token string without parsing
     pub fn new(token: impl Into<String>) -> Self {
-        let raw = token.into();
+        let raw_string = token.into();
         // Try to parse, fall back to empty claims
-        let claims = Self::parse_claims(&raw).unwrap_or_else(|_| TokenClaims {
+        let claims = Self::parse_claims(&raw_string).unwrap_or_else(|_| TokenClaims {
             iss: String::new(),
             sub: String::new(),
             aud: Audience::None,
@@ -109,7 +117,10 @@ impl IdentityToken {
             email_verified: None,
             federated_claims: None,
         });
-        Self { raw, claims }
+        Self {
+            raw: SecretString::from(raw_string),
+            claims,
+        }
     }
 
     fn parse_claims(token: &str) -> Result<TokenClaims> {
@@ -124,14 +135,12 @@ impl IdentityToken {
             .map_err(|e| Error::Token(format!("failed to parse claims: {}", e)))
     }
 
-    /// Get the raw JWT string
-    pub fn raw(&self) -> &str {
-        &self.raw
-    }
-
-    /// Get the token string (alias for raw)
-    pub fn token(&self) -> &str {
-        &self.raw
+    /// Reveal the raw JWT string
+    ///
+    /// This returns a reference to the secret token value.
+    /// Use with care - avoid logging or displaying this value.
+    pub fn reveal(&self) -> &str {
+        self.raw.expose_secret()
     }
 
     /// Get the issuer
@@ -226,5 +235,7 @@ mod tests {
         assert_eq!(token.subject(), "user123");
         assert_eq!(token.email(), Some("test@example.com"));
         assert!(!token.is_expired());
+        // Verify reveal() works
+        assert!(token.reveal().starts_with(&header));
     }
 }
