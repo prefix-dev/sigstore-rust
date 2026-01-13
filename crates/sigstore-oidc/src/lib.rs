@@ -3,12 +3,10 @@
 //! This crate handles identity token acquisition through various OIDC flows
 //! including interactive browser-based OAuth and ambient credential detection.
 
-pub mod ambient;
 pub mod error;
 pub mod oauth;
 pub mod token;
 
-pub use ambient::{detect_environment, get_ambient_token, is_ci_environment, CiEnvironment};
 pub use error::{Error, Result};
 pub use oauth::{get_identity_token, DeviceCodeResponse, OAuthClient, OAuthConfig};
 pub use token::{issuers, Audience, FederatedClaims, IdentityToken, TokenClaims};
