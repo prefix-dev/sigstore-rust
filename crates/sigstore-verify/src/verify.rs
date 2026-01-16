@@ -418,6 +418,181 @@ pub fn verify<'a>(
     verifier.verify(artifact, bundle, policy)
 }
 
+/// Verify an artifact against a bundle using a provided public key
+///
+/// This is used for managed key verification where the bundle contains a public key
+/// hint instead of a certificate. The actual public key is provided separately.
+///
+/// This verification:
+/// - Verifies the signature using the provided public key
+/// - Verifies transparency log entries (checkpoints, SETs)
+/// - Skips certificate chain verification (no certificate present)
+/// - Skips identity/issuer verification
+///
+/// # Example
+///
+/// ```no_run
+/// use sigstore_verify::verify_with_key;
+/// use sigstore_trust_root::TrustedRoot;
+/// use sigstore_types::{Bundle, DerPublicKey};
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let trusted_root = TrustedRoot::from_file("trusted_root.json")?;
+/// let bundle_json = std::fs::read_to_string("artifact.sigstore.json")?;
+/// let bundle = Bundle::from_json(&bundle_json)?;
+/// let artifact = std::fs::read("artifact.txt")?;
+/// let key_pem = std::fs::read_to_string("key.pub")?;
+/// let public_key = DerPublicKey::from_pem(&key_pem)?;
+///
+/// let result = verify_with_key(&artifact, &bundle, &public_key, &trusted_root)?;
+/// assert!(result.success);
+/// # Ok(())
+/// # }
+/// ```
+pub fn verify_with_key<'a>(
+    artifact: impl Into<Artifact<'a>>,
+    bundle: &Bundle,
+    public_key: &sigstore_types::DerPublicKey,
+    trusted_root: &TrustedRoot,
+) -> Result<VerificationResult> {
+    use sigstore_bundle::{validate_bundle_with_options, ValidationOptions};
+    use sigstore_crypto::{detect_key_type, KeyType, SigningScheme};
+
+    let artifact = artifact.into();
+    let result = VerificationResult::success();
+
+    // Validate bundle structure
+    let options = ValidationOptions {
+        require_inclusion_proof: true,
+        require_timestamp: false,
+    };
+    validate_bundle_with_options(bundle, &options)
+        .map_err(|e| Error::Verification(format!("bundle validation failed: {}", e)))?;
+
+    // Determine signing scheme from public key
+    let signing_scheme = match detect_key_type(public_key) {
+        KeyType::Ed25519 => SigningScheme::Ed25519,
+        KeyType::EcdsaP256 => SigningScheme::EcdsaP256Sha256,
+        KeyType::Unknown => {
+            return Err(Error::Verification(
+                "unsupported or unrecognized public key type".to_string(),
+            ));
+        }
+    };
+
+    // Verify transparency log entries (checkpoints, SETs) without certificate time validation
+    for entry in &bundle.verification_material.tlog_entries {
+        // Verify checkpoint signature if present
+        if let Some(ref inclusion_proof) = entry.inclusion_proof {
+            crate::verify_impl::tlog::verify_checkpoint(
+                &inclusion_proof.checkpoint.envelope,
+                inclusion_proof,
+                trusted_root,
+            )?;
+        }
+
+        // Verify inclusion promise (SET) if present
+        if entry.inclusion_promise.is_some() {
+            crate::verify_impl::tlog::verify_set(entry, trusted_root)?;
+        }
+    }
+
+    // Verify the signature
+    match &bundle.content {
+        SignatureContent::MessageSignature(msg_sig) => {
+            // Verify message digest matches artifact
+            if let Some(ref digest) = msg_sig.message_digest {
+                let artifact_hash = compute_artifact_digest(&artifact);
+                if digest.digest.as_bytes() != artifact_hash.as_bytes() {
+                    return Err(Error::Verification(
+                        "message digest in bundle does not match artifact hash".to_string(),
+                    ));
+                }
+            }
+
+            // Verify signature over the artifact
+            let artifact_hash = compute_artifact_digest(&artifact);
+
+            // Use prehashed verification if supported
+            if signing_scheme.uses_sha256() && signing_scheme.supports_prehashed() {
+                sigstore_crypto::verify_signature_prehashed(
+                    public_key,
+                    &artifact_hash,
+                    &msg_sig.signature,
+                    signing_scheme,
+                )
+                .map_err(|e| {
+                    Error::Verification(format!("signature verification failed: {}", e))
+                })?;
+            } else {
+                // For non-prehashed schemes, we need the original bytes
+                match &artifact {
+                    Artifact::Bytes(bytes) => {
+                        sigstore_crypto::verify_signature(
+                            public_key,
+                            bytes,
+                            &msg_sig.signature,
+                            signing_scheme,
+                        )
+                        .map_err(|e| {
+                            Error::Verification(format!("signature verification failed: {}", e))
+                        })?;
+                    }
+                    Artifact::Digest(_) => {
+                        return Err(Error::Verification(
+                            "cannot verify signature with digest-only for this key type"
+                                .to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+        SignatureContent::DsseEnvelope(envelope) => {
+            let payload_bytes = envelope.decode_payload();
+            let pae = sigstore_types::pae(&envelope.payload_type, &payload_bytes);
+
+            // Verify at least one signature is valid
+            let mut any_sig_valid = false;
+            for sig in &envelope.signatures {
+                if sigstore_crypto::verify_signature(public_key, &pae, &sig.sig, signing_scheme)
+                    .is_ok()
+                {
+                    any_sig_valid = true;
+                    break;
+                }
+            }
+
+            if !any_sig_valid {
+                return Err(Error::Verification(
+                    "DSSE signature verification failed: no valid signatures found".to_string(),
+                ));
+            }
+
+            // Verify artifact hash matches for in-toto statements
+            if envelope.payload_type == "application/vnd.in-toto+json" {
+                let artifact_hash = compute_artifact_digest(&artifact);
+                let artifact_hash_hex = artifact_hash.to_hex();
+
+                let payload_str = std::str::from_utf8(&payload_bytes).map_err(|e| {
+                    Error::Verification(format!("payload is not valid UTF-8: {}", e))
+                })?;
+
+                let statement: Statement = serde_json::from_str(payload_str).map_err(|e| {
+                    Error::Verification(format!("failed to parse in-toto statement: {}", e))
+                })?;
+
+                if !statement.subject.is_empty() && !statement.matches_sha256(&artifact_hash_hex) {
+                    return Err(Error::Verification(
+                        "artifact hash does not match any subject in attestation".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

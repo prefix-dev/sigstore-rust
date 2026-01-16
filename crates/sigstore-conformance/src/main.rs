@@ -54,6 +54,7 @@ fn print_usage(program: &str) {
     eprintln!("Usage:");
     eprintln!("  {} sign-bundle --identity-token TOKEN --bundle FILE [--staging] [--trusted-root FILE] [--signing-config FILE] ARTIFACT", program);
     eprintln!("  {} verify-bundle --bundle FILE --certificate-identity IDENTITY --certificate-oidc-issuer URL [--staging] [--trusted-root FILE] ARTIFACT_OR_DIGEST", program);
+    eprintln!("  {} verify-bundle --bundle FILE --key KEY_FILE [--staging] [--trusted-root FILE] ARTIFACT_OR_DIGEST", program);
 }
 
 #[tokio::main]
@@ -206,6 +207,7 @@ fn verify_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let mut bundle_path: Option<String> = None;
     let mut certificate_identity: Option<String> = None;
     let mut certificate_oidc_issuer: Option<String> = None;
+    let mut key_path: Option<String> = None;
     let mut artifact_or_digest: Option<String> = None;
     let mut _staging = false;
     let mut trusted_root_path: Option<String> = None;
@@ -234,6 +236,13 @@ fn verify_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 certificate_oidc_issuer = Some(args[i].clone());
             }
+            "--key" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("Missing value for --key".into());
+                }
+                key_path = Some(args[i].clone());
+            }
             "--staging" => {
                 _staging = true;
             }
@@ -255,11 +264,18 @@ fn verify_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let bundle_path = bundle_path.ok_or("Missing required --bundle")?;
-    let certificate_identity =
-        certificate_identity.ok_or("Missing required --certificate-identity")?;
-    let certificate_oidc_issuer =
-        certificate_oidc_issuer.ok_or("Missing required --certificate-oidc-issuer")?;
     let artifact_or_digest = artifact_or_digest.ok_or("Missing artifact or digest")?;
+
+    // Check if using key-based or certificate-based verification
+    let use_key_verification = key_path.is_some();
+    if !use_key_verification {
+        // Certificate-based verification requires identity and issuer
+        if certificate_identity.is_none() || certificate_oidc_issuer.is_none() {
+            return Err(
+                "Either --key or both --certificate-identity and --certificate-oidc-issuer must be provided".into(),
+            );
+        }
+    }
 
     // Load trusted root - use provided path or default to production
     let trusted_root = if let Some(root_path) = trusted_root_path {
@@ -272,6 +288,56 @@ fn verify_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     // Load bundle
     let bundle_json = fs::read_to_string(&bundle_path)?;
     let bundle = Bundle::from_json(&bundle_json)?;
+
+    // Handle key-based verification
+    if let Some(key_path) = key_path {
+        use sigstore_types::DerPublicKey;
+        use sigstore_verify::verify_with_key;
+
+        // Load public key from PEM file
+        let key_pem = fs::read_to_string(&key_path)?;
+        let public_key = DerPublicKey::from_pem(&key_pem)
+            .map_err(|e| format!("Failed to parse public key: {}", e))?;
+
+        // Verify using the public key
+        if artifact_or_digest.starts_with("sha256:") {
+            // It's a digest
+            let digest_hex = artifact_or_digest
+                .strip_prefix("sha256:")
+                .ok_or("Invalid digest format")?;
+            let digest_bytes =
+                hex::decode(digest_hex).map_err(|e| format!("Invalid hex digest: {}", e))?;
+
+            if digest_bytes.len() != 32 {
+                return Err(format!(
+                    "Invalid SHA256 digest length: expected 32 bytes, got {}",
+                    digest_bytes.len()
+                )
+                .into());
+            }
+
+            let artifact_digest = Sha256Hash::try_from_slice(&digest_bytes)
+                .map_err(|e| format!("Invalid digest: {}", e))?;
+
+            let result = verify_with_key(artifact_digest, &bundle, &public_key, &trusted_root)?;
+            if !result.success {
+                return Err("Verification failed".into());
+            }
+        } else {
+            // It's a file path
+            let artifact_data = fs::read(&artifact_or_digest)?;
+            let result = verify_with_key(&artifact_data, &bundle, &public_key, &trusted_root)?;
+            if !result.success {
+                return Err("Verification failed".into());
+            }
+        }
+
+        return Ok(());
+    }
+
+    // Certificate-based verification
+    let certificate_identity = certificate_identity.unwrap();
+    let certificate_oidc_issuer = certificate_oidc_issuer.unwrap();
 
     // Create verification policy
     let policy = VerificationPolicy::default()
