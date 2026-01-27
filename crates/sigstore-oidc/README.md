@@ -13,26 +13,22 @@ This crate handles OIDC (OpenID Connect) authentication for Sigstore's keyless s
 - **Token parsing**: OIDC token validation and claim extraction
 - **Multiple providers**: Support for various identity providers
 
-## Supported Environments
+## Ambient credential detection
 
-Ambient credential detection works in:
-
-- GitHub Actions (`ACTIONS_ID_TOKEN_REQUEST_TOKEN`)
-- GitLab CI (`SIGSTORE_ID_TOKEN`)
-- Google Cloud (Workload Identity)
-- Generic OIDC token files
+Ambient OIDC credentials are detected in CI systems like GitHub: See [ambient-id](https://github.com/astral-sh/ambient-id) for a list of supported environments, and details for their use.
 
 ## Usage
 
 ```rust
-use sigstore_oidc::{get_identity_token, OAuthConfig};
+use sigstore_oidc::{get_identity_token, IdentityToken};
 
-// Try ambient credentials first, fall back to OAuth flow
-let token = get_identity_token().await?;
-
-// Or use explicit OAuth flow
-let config = OAuthConfig::sigstore();
-let token = config.get_token().await?;
+// Try ambient credentials first, fall back to interactive OAuth
+let token = match IdentityToken::detect_ambient().await? {
+    Some(token) => token,
+    None => get_identity_token(|response| {
+        println!("Visit {}, use code {}", response.verification_uri, response.user_code);
+    }).await?,
+};
 ```
 
 ## Related Crates
