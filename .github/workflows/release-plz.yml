@@ -15,6 +15,7 @@ jobs:
     concurrency:
       group: release-plz-release
       cancel-in-progress: false
+
     # Permissions needed for:
     # - contents: write - create GitHub releases
     # - pull-requests: write - update PRs
@@ -23,11 +24,15 @@ jobs:
       contents: write
       pull-requests: write
       id-token: write
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@1.89.0
@@ -38,8 +43,7 @@ jobs:
           command: release
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-          # Uses trusted publishing via OIDC (id-token: write permission)
-          # No CARGO_REGISTRY_TOKEN needed
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
   # Create a PR with the new versions and changelog, preparing the next release.
   release-plz-pr:

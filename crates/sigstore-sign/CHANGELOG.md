@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/prefix-dev/sigstore-rust/compare/sigstore-sign-v0.6.0...sigstore-sign-v0.6.1) - 2026-01-26
+
+### Added
+
+- use `ambient-id` to detect tokens in CI pipelines ([#36](https://github.com/prefix-dev/sigstore-rust/pull/36))
+
 ## [0.6.0](https://github.com/wolfv/sigstore-rust/compare/sigstore-sign-v0.5.0...sigstore-sign-v0.6.0) - 2025-12-08
 
 ### Other

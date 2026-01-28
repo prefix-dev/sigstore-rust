@@ -43,7 +43,7 @@
 use sigstore_oidc::get_identity_token;
 #[cfg(feature = "interactive")]
 use sigstore_oidc::get_interactive_token;
-use sigstore_oidc::{get_ambient_token, is_ci_environment, IdentityToken};
+use sigstore_oidc::IdentityToken;
 use sigstore_sign::{Attestation, SigningConfig, SigningContext};
 
 use std::env;
@@ -249,11 +249,13 @@ async fn get_token(explicit_token: Option<String>) -> Result<IdentityToken, Stri
         return IdentityToken::from_jwt(&token_str).map_err(|e| format!("Invalid token: {}", e));
     }
 
-    if is_ci_environment() {
+    // Try ambient credentials (CI/CD environments)
+    if let Some(token) = IdentityToken::detect_ambient()
+        .await
+        .map_err(|e| e.to_string())?
+    {
         println!("  Detected CI environment, using ambient credentials");
-        return get_ambient_token()
-            .await
-            .map_err(|e| format!("Failed to get ambient token: {}", e));
+        return Ok(token);
     }
 
     println!("  Starting interactive authentication...");

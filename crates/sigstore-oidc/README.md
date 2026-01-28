@@ -18,24 +18,22 @@ This crate handles OIDC (OpenID Connect) authentication for Sigstore's keyless s
 
 - `interactive` - Enables browser-based authentication with auto-open and local redirect server. Adds the `open` dependency.
 
-## Supported Environments
+## Ambient credential detection
 
-Ambient credential detection works in:
-
-- GitHub Actions (`ACTIONS_ID_TOKEN_REQUEST_TOKEN`)
-- GitLab CI (`SIGSTORE_ID_TOKEN`)
-- Google Cloud (Workload Identity)
-- Generic OIDC token files
+Ambient OIDC credentials are detected in CI systems like GitHub: See [ambient-id](https://github.com/astral-sh/ambient-id) for a list of supported environments, and details for their use.
 
 ## Usage
 
 ```rust
-use sigstore_oidc::{get_ambient_token, is_ci_environment};
+use sigstore_oidc::{get_identity_token, IdentityToken};
 
-// In CI environments, use ambient credentials
-if is_ci_environment() {
-    let token = get_ambient_token().await?;
-}
+// Try ambient credentials first, fall back to interactive OAuth
+let token = match IdentityToken::detect_ambient().await? {
+    Some(token) => token,
+    None => get_identity_token(|response| {
+        println!("Visit {}, use code {}", response.verification_uri, response.user_code);
+    }).await?,
+};
 ```
 
 With the `interactive` feature enabled:
@@ -45,18 +43,6 @@ use sigstore_oidc::get_interactive_token;
 
 // Opens browser automatically, receives callback on local server
 let token = get_interactive_token().await?;
-```
-
-Without the `interactive` feature (device code flow):
-
-```rust
-use sigstore_oidc::get_identity_token;
-
-// User manually enters code shown on screen
-let token = get_identity_token(|response| {
-    println!("Visit: {}", response.verification_uri);
-    println!("Enter code: {}", response.user_code);
-}).await?;
 ```
 
 ## Related Crates

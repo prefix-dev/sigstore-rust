@@ -20,6 +20,7 @@ serde_json = { workspace = true }
 reqwest = { workspace = true, features = ["rustls-tls"] }
 url = { workspace = true }
 tokio = { workspace = true }
+ambient-id = "0.0.7"
 thiserror = { workspace = true }
 base64 = { workspace = true }
 rand = { workspace = true }

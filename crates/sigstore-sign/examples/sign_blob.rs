@@ -40,7 +40,7 @@
 use sigstore_oidc::get_identity_token;
 #[cfg(feature = "interactive")]
 use sigstore_oidc::get_interactive_token;
-use sigstore_oidc::{get_ambient_token, is_ci_environment, IdentityToken};
+use sigstore_oidc::IdentityToken;
 use sigstore_rekor::RekorApiVersion;
 use sigstore_sign::{SigningConfig, SigningContext};
 
@@ -243,11 +243,12 @@ async fn get_token(explicit_token: Option<String>) -> Result<IdentityToken, Stri
     }
 
     // 2. Try ambient credentials (CI/CD environments)
-    if is_ci_environment() {
+    if let Some(token) = IdentityToken::detect_ambient()
+        .await
+        .map_err(|e| e.to_string())?
+    {
         println!("  Detected CI environment, using ambient credentials");
-        return get_ambient_token()
-            .await
-            .map_err(|e| format!("Failed to get ambient token: {}", e));
+        return Ok(token);
     }
 
     // 3. Fall back to interactive OAuth

@@ -1,6 +1,7 @@
 //! Identity token handling
 
 use crate::error::{Error, Result};
+use ambient_id::Detector;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 
@@ -93,6 +94,21 @@ impl IdentityToken {
             raw: token.to_string(),
             claims,
         })
+    }
+
+    /// Detect and retrieve an ambient identity token from the current environment
+    ///
+    /// This attempts to find OIDC credentials in environments like GitHub Actions,
+    /// GitLab CI, Buildkite, etc. using the `ambient-id` crate.
+    pub async fn detect_ambient() -> Result<Option<Self>> {
+        match Detector::new().detect("sigstore").await {
+            Ok(Some(token)) => Self::from_jwt(token.reveal()).map(Some),
+            Ok(None) => Ok(None),
+            Err(e) => Err(Error::Token(format!(
+                "failed to detect ambient credentials: {}",
+                e
+            ))),
+        }
     }
 
     /// Create from raw token string without parsing
