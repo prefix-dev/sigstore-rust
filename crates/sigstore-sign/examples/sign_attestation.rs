@@ -39,7 +39,11 @@
 //!     crates/sigstore-verify/test_data/bundles/signed-package-2.1.0-hb0f4dca_0.conda
 //! ```
 
-use sigstore_oidc::{get_ambient_token, get_identity_token, is_ci_environment, IdentityToken};
+#[cfg(not(feature = "interactive"))]
+use sigstore_oidc::get_identity_token;
+#[cfg(feature = "interactive")]
+use sigstore_oidc::get_interactive_token;
+use sigstore_oidc::{get_ambient_token, is_ci_environment, IdentityToken};
 use sigstore_sign::{Attestation, SigningConfig, SigningContext};
 
 use std::env;
@@ -255,18 +259,28 @@ async fn get_token(explicit_token: Option<String>) -> Result<IdentityToken, Stri
     println!("  Starting interactive authentication...");
     println!();
 
-    get_identity_token(|response| {
-        println!("Please visit: {}", response.verification_uri);
-        if let Some(complete_uri) = &response.verification_uri_complete {
-            println!("Or open: {}", complete_uri);
-        }
-        println!();
-        println!("Enter code: {}", response.user_code);
-        println!();
-        println!("Waiting for authentication...");
-    })
-    .await
-    .map_err(|e| format!("OAuth failed: {}", e))
+    #[cfg(feature = "interactive")]
+    {
+        get_interactive_token()
+            .await
+            .map_err(|e| format!("OAuth failed: {}", e))
+    }
+
+    #[cfg(not(feature = "interactive"))]
+    {
+        get_identity_token(|response| {
+            println!("Please visit: {}", response.verification_uri);
+            if let Some(complete_uri) = &response.verification_uri_complete {
+                println!("Or open: {}", complete_uri);
+            }
+            println!();
+            println!("Enter code: {}", response.user_code);
+            println!();
+            println!("Waiting for authentication...");
+        })
+        .await
+        .map_err(|e| format!("OAuth failed: {}", e))
+    }
 }
 
 fn print_usage(program: &str) {

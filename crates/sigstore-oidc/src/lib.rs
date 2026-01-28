@@ -6,11 +6,20 @@
 pub mod ambient;
 pub mod error;
 pub mod oauth;
+#[cfg(feature = "interactive")]
+pub mod templates;
 pub mod token;
 
 pub use ambient::{detect_environment, get_ambient_token, is_ci_environment, CiEnvironment};
 pub use error::{Error, Result};
 pub use oauth::{get_identity_token, DeviceCodeResponse, OAuthClient, OAuthConfig};
+#[cfg(feature = "interactive")]
+pub use oauth::{
+    get_interactive_token, get_interactive_token_with_callback, BrowserResult,
+    DefaultInteractiveCallback, InteractiveCallback,
+};
+#[cfg(feature = "interactive")]
+pub use templates::{DefaultTemplates, HtmlTemplates, MinimalTemplates};
 pub use token::{issuers, Audience, FederatedClaims, IdentityToken, TokenClaims};
 
 /// Parse an identity token from a JWT string

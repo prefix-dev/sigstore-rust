@@ -8,10 +8,15 @@ This crate handles OIDC (OpenID Connect) authentication for Sigstore's keyless s
 
 ## Features
 
-- **OAuth 2.0 device flow**: Interactive authentication via browser
+- **Interactive browser authentication** (requires `interactive` feature): Opens browser automatically for seamless OAuth flow with local redirect server
+- **OAuth 2.0 device flow**: Interactive authentication without extra dependencies
 - **Ambient credentials**: Automatic detection of CI/CD environment tokens
 - **Token parsing**: OIDC token validation and claim extraction
 - **Multiple providers**: Support for various identity providers
+
+## Cargo Features
+
+- `interactive` - Enables browser-based authentication with auto-open and local redirect server. Adds the `open` dependency.
 
 ## Supported Environments
 
@@ -25,14 +30,33 @@ Ambient credential detection works in:
 ## Usage
 
 ```rust
-use sigstore_oidc::{get_identity_token, OAuthConfig};
+use sigstore_oidc::{get_ambient_token, is_ci_environment};
 
-// Try ambient credentials first, fall back to OAuth flow
-let token = get_identity_token().await?;
+// In CI environments, use ambient credentials
+if is_ci_environment() {
+    let token = get_ambient_token().await?;
+}
+```
 
-// Or use explicit OAuth flow
-let config = OAuthConfig::sigstore();
-let token = config.get_token().await?;
+With the `interactive` feature enabled:
+
+```rust
+use sigstore_oidc::get_interactive_token;
+
+// Opens browser automatically, receives callback on local server
+let token = get_interactive_token().await?;
+```
+
+Without the `interactive` feature (device code flow):
+
+```rust
+use sigstore_oidc::get_identity_token;
+
+// User manually enters code shown on screen
+let token = get_identity_token(|response| {
+    println!("Visit: {}", response.verification_uri);
+    println!("Enter code: {}", response.user_code);
+}).await?;
 ```
 
 ## Related Crates
