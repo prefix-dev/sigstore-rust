@@ -20,7 +20,7 @@ members = [
 version = "0.6.0"
 edition = "2021"
 license = "BSD-3-Clause"
-repository = "https://github.com/wolfv/sigstore-rust"
+repository = "https://github.com/prefix-dev/sigstore-rust"
 rust-version = "1.70"
 
 [workspace.dependencies]
