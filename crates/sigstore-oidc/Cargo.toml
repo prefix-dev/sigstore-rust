@@ -20,7 +20,10 @@ serde_json = { workspace = true }
 reqwest = { workspace = true }
 url = { workspace = true }
 tokio = { workspace = true }
-ambient-id = { git = "https://github.com/pavelzw/ambient-id", branch = "native-tls", default-features = false, features = ["reqwest-middleware"] }
+# https://github.com/astral-sh/ambient-id/pull/26
+ambient-id = { git = "https://github.com/pavelzw/ambient-id", branch = "native-tls", default-features = false, features = [
+  "reqwest-middleware",
+] }
 thiserror = { workspace = true }
 base64 = { workspace = true }
 rand = { workspace = true }
