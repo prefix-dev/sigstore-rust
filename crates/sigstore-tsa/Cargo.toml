@@ -28,10 +28,13 @@ cms = { workspace = true, default-features = false }
 x509-cert = { workspace = true }
 x509-tsp = { workspace = true, default-features = false }
 cmpv2 = { workspace = true, default-features = false }
-rustls-webpki = { workspace = true, default-features = false, features = ["alloc", "std"] }
+rustls-webpki = { workspace = true, default-features = false, features = [
+  "alloc",
+  "std",
+] }
 rustls-pki-types = { workspace = true, default-features = false }
 chrono = { workspace = true, features = ["std"] }
-tracing = { workspace = true}
+tracing = { workspace = true }
 hex = { workspace = true }
 
 [dev-dependencies]
