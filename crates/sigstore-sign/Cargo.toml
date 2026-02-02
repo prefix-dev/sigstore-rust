@@ -28,4 +28,18 @@ serde = { workspace = true }
 hex = { workspace = true }
 
 [features]
-default = []
+default = ["rustls-tls"]
+rustls-tls = [
+    "sigstore-bundle/rustls-tls",
+    "sigstore-rekor/rustls-tls",
+    "sigstore-fulcio/rustls-tls",
+    "sigstore-oidc/rustls-tls",
+    "sigstore-tsa/rustls-tls",
+]
+native-tls = [
+    "sigstore-bundle/native-tls",
+    "sigstore-rekor/native-tls",
+    "sigstore-fulcio/native-tls",
+    "sigstore-oidc/native-tls",
+    "sigstore-tsa/native-tls",
+]

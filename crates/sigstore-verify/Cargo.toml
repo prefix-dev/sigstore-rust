@@ -12,9 +12,9 @@ sigstore-types = { workspace = true }
 sigstore-crypto = { workspace = true }
 sigstore-merkle = { workspace = true }
 sigstore-trust-root = { workspace = true }
-sigstore-bundle = { workspace = true }
-sigstore-rekor = { workspace = true }
-sigstore-tsa = { workspace = true }
+sigstore-bundle = { workspace = true, default-features = false }
+sigstore-rekor = { workspace = true, default-features = false }
+sigstore-tsa = { workspace = true, default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_json_canonicalizer = { workspace = true }
@@ -44,5 +44,7 @@ sigstore-types = { workspace = true }
 regex = { workspace = true }
 
 [features]
-default = []
+default = ["rustls-tls"]
+rustls-tls = ["sigstore-bundle/rustls-tls", "sigstore-rekor/rustls-tls", "sigstore-tsa/rustls-tls"]
+native-tls = ["sigstore-bundle/native-tls", "sigstore-rekor/native-tls", "sigstore-tsa/native-tls"]
 tuf = ["sigstore-trust-root/tuf"]
