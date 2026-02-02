@@ -26,7 +26,7 @@ for package in $packages; do
     ((++checked))
 
     features=$(echo "$metadata" | jq -r --arg pkg "$package" '
-        .packages[] | select(.name == $pkg) | .features | keys[] | select(. != "rustls-tls" and . != "default")
+        .packages[] | select(.name == $pkg) | .features | keys[] | select(. != "rustls-tls" and . != "default" and . != "tuf" and . != "tough")
     ' | tr '\n' ',' | sed 's/,$//')
 
     # Run cargo tree with all features except skipped features (prod dependencies only)
@@ -38,6 +38,11 @@ for package in $packages; do
 
     if echo "$output" | grep -q "^rustls"; then
         echo "FAIL: $package has rustls dependency"
+        if [ -n "$features" ]; then
+            echo "Reproduce: cargo tree -i rustls --no-default-features --features \"$features\" --package \"$package\" --locked --edges=normal"
+        else
+            echo "Reproduce: cargo tree -i rustls --no-default-features --package \"$package\" --locked --edges=normal"
+        fi
         echo "$output" | head -20
         echo ""
         ((++failed))
