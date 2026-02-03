@@ -57,7 +57,7 @@ rustls-webpki = { version = "0.103", default-features = false, features = ["allo
 rustls-pki-types = { version = "1.13", default-features = false, features = ["alloc"] }
 
 # HTTP
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "form"] }
 url = "2.5"
 
 # Async
