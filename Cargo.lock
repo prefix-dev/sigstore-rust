@@ -20,8 +20,7 @@ dependencies = [
 [[package]]
 name = "ambient-id"
 version = "0.0.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7da8b1a2dc4570b482432b9968c57c194c1bfc109a2936a3e9471fc43dd0962e"
+source = "git+https://github.com/pavelzw/ambient-id?branch=reqwest-middleware-feature#0b0080d1858b35e0c29f30b4f6247ddd54ac799e"
 dependencies = [
  "reqwest 0.12.26",
  "reqwest-middleware",
@@ -2752,9 +2751,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.4"
+version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2878ef029c47c6e8cf779119f20fcf52bde7ad42a731b2a304bc221df17571e"
+checksum = "12bed680863276c63889429bfd6cab3b99943659923822de1c8a39c49e4d722c"
 dependencies = [
  "rustls-pki-types",
 ]

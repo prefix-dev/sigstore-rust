@@ -20,7 +20,7 @@ serde_json = { workspace = true }
 reqwest = { workspace = true }
 url = { workspace = true }
 tokio = { workspace = true }
-ambient-id = "0.0.9"
+ambient-id = { workspace = true }
 thiserror = { workspace = true }
 base64 = { workspace = true }
 rand = { workspace = true }
