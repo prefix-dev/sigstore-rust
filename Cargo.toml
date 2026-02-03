@@ -60,7 +60,9 @@ rustls-pki-types = { version = "1.13", default-features = false, features = ["al
 ambient-id = { git = "https://github.com/pavelzw/ambient-id", branch = "reqwest-middleware-feature", default-features = false, features = [
   "reqwest-middleware",
 ] }
-# ambient-id = { version = "0.0.10" }
+# ambient-id = { version = "0.0.10", default-features = false, features = [
+#   "reqwest-middleware",
+# ] }
 
 # HTTP
 reqwest = { version = "0.13", default-features = false, features = ["json", "form"] }
