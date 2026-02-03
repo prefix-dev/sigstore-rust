@@ -8,8 +8,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [features]
-default = ["rustls-tls"]
-rustls-tls = ["reqwest/rustls-tls"]
+default = ["rustls"]
+rustls = ["reqwest/rustls-tls"]
 native-tls = ["reqwest/native-tls"]
 cache = ["sigstore-cache"]
 

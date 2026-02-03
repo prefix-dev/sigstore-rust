@@ -44,7 +44,15 @@ sigstore-types = { workspace = true }
 regex = { workspace = true }
 
 [features]
-default = ["rustls-tls"]
-rustls-tls = ["sigstore-bundle/rustls-tls", "sigstore-rekor/rustls-tls", "sigstore-tsa/rustls-tls"]
-native-tls = ["sigstore-bundle/native-tls", "sigstore-rekor/native-tls", "sigstore-tsa/native-tls"]
+default = ["rustls"]
+rustls = [
+  "sigstore-bundle/rustls",
+  "sigstore-rekor/rustls",
+  "sigstore-tsa/rustls",
+]
+native-tls = [
+  "sigstore-bundle/native-tls",
+  "sigstore-rekor/native-tls",
+  "sigstore-tsa/native-tls",
+]
 tuf = ["sigstore-trust-root/tuf"]

@@ -8,8 +8,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [features]
-default = ["rustls-tls"]
-rustls-tls = ["reqwest/rustls-tls", "ambient-id/rustls-tls"]
+default = ["rustls"]
+rustls = ["reqwest/rustls-tls", "ambient-id/rustls"]
 native-tls = ["reqwest/native-tls", "ambient-id/native-tls"]
 
 [dependencies]
@@ -20,10 +20,7 @@ serde_json = { workspace = true }
 reqwest = { workspace = true }
 url = { workspace = true }
 tokio = { workspace = true }
-# https://github.com/astral-sh/ambient-id/pull/26
-ambient-id = { git = "https://github.com/pavelzw/ambient-id", branch = "native-tls", default-features = false, features = [
-  "reqwest-middleware",
-] }
+ambient-id = "0.0.9"
 thiserror = { workspace = true }
 base64 = { workspace = true }
 rand = { workspace = true }

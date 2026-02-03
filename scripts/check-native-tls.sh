@@ -14,7 +14,7 @@ FORBIDDEN_CRATE="rustls"
 # Features to exclude when testing (space-separated)
 # These features will NOT be enabled during the check
 # Note: Auto-generated features for optional deps (dep:X) are automatically excluded
-EXCLUDE_FEATURES="rustls-tls default tuf"
+EXCLUDE_FEATURES="rustls default tuf"
 
 # Packages to skip entirely (space-separated)
 # Use this for packages that are known to require the forbidden crate

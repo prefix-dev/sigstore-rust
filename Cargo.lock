@@ -19,8 +19,9 @@ dependencies = [
 
 [[package]]
 name = "ambient-id"
-version = "0.0.7"
-source = "git+https://github.com/pavelzw/ambient-id?branch=native-tls#bdda5551750e7857f3b3598ad7ab7b753dfd8bc8"
+version = "0.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7da8b1a2dc4570b482432b9968c57c194c1bfc109a2936a3e9471fc43dd0962e"
 dependencies = [
  "reqwest",
  "reqwest-middleware",
