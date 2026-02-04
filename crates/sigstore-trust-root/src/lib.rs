@@ -21,35 +21,60 @@
 //!
 //! # Features
 //!
-//! - `tuf` - Enable TUF (The Update Framework) support for securely fetching
-//!   trusted roots from Sigstore's TUF repository. This adds async methods
-//!   like [`TrustedRoot::from_tuf()`] and [`TrustedRoot::from_tuf_staging()`].
+//! - `tuf` (default) - Enable TUF (The Update Framework) support for securely fetching
+//!   trusted roots from Sigstore's TUF repository. This is the recommended way to use
+//!   this crate for production as it ensures you always have up-to-date trust material.
 //!
-//! # Example
+//! # Example (Recommended)
+//!
+//! Fetch the latest trusted root and signing config via TUF protocol:
 //!
 //! ```no_run
 //! use sigstore_trust_root::{TrustedRoot, SigningConfig};
 //!
-//! // Load embedded production trusted root
-//! let root = TrustedRoot::production().unwrap();
-//!
-//! // Load embedded production signing config
-//! let config = SigningConfig::production().unwrap();
+//! # async fn example() -> Result<(), sigstore_trust_root::Error> {
+//! // Fetch via TUF protocol (secure, up-to-date) - RECOMMENDED
+//! let root = TrustedRoot::production().await?;
+//! let config = SigningConfig::production().await?;
 //!
 //! // Get the best Rekor endpoint (highest available version)
 //! if let Some(rekor) = config.get_rekor_url(None) {
 //!     println!("Rekor URL: {} (v{})", rekor.url, rekor.major_api_version);
 //! }
+//! # Ok(())
+//! # }
 //! ```
 //!
-//! With the `tuf` feature enabled:
+//! # Example (Offline/Embedded)
+//!
+//! Use embedded data when offline or TUF is not available:
+//!
+//! ```
+//! use sigstore_trust_root::{
+//!     TrustedRoot, SigningConfig,
+//!     SIGSTORE_PRODUCTION_TRUSTED_ROOT, SIGSTORE_PRODUCTION_SIGNING_CONFIG,
+//! };
+//!
+//! // Use embedded data (may be stale, but works offline)
+//! let root = TrustedRoot::from_json(SIGSTORE_PRODUCTION_TRUSTED_ROOT).unwrap();
+//! let config = SigningConfig::from_json(SIGSTORE_PRODUCTION_SIGNING_CONFIG).unwrap();
+//! ```
+//!
+//! # Example (Custom TUF Repository)
+//!
+//! Fetch from a custom TUF repository (e.g., for testing):
 //!
 //! ```ignore
-//! use sigstore_trust_root::{TrustedRoot, SigningConfig};
+//! use sigstore_trust_root::{TrustedRoot, TufConfig};
 //!
-//! // Fetch via TUF protocol (secure, up-to-date)
-//! let root = TrustedRoot::from_tuf().await?;
-//! let config = SigningConfig::from_tuf().await?;
+//! # async fn example() -> Result<(), sigstore_trust_root::Error> {
+//! let config = TufConfig::custom(
+//!     "https://sigstore.github.io/root-signing/",
+//!     include_bytes!("path/to/root.json"),
+//! );
+//! let root = TrustedRoot::from_tuf(config).await?;
+//! # Ok(())
+//! # }
 //! ```
 
 pub mod error;

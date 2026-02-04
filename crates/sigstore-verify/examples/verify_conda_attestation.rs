@@ -24,7 +24,7 @@
 //!     crates/sigstore-verify/test_data/bundles/conda-attestation.sigstore.json
 //! ```
 
-use sigstore_trust_root::TrustedRoot;
+use sigstore_trust_root::{TrustedRoot, SIGSTORE_PRODUCTION_TRUSTED_ROOT};
 use sigstore_types::{bundle::SignatureContent, Bundle};
 use sigstore_verify::{verify, VerificationPolicy};
 
@@ -78,7 +78,9 @@ fn main() {
     };
 
     // Load trusted root (production Sigstore infrastructure)
-    let trusted_root = match TrustedRoot::production() {
+    // Using embedded data for this example - in production, prefer TrustedRoot::production().await
+    // to fetch the latest trust material via TUF protocol
+    let trusted_root = match TrustedRoot::from_json(SIGSTORE_PRODUCTION_TRUSTED_ROOT) {
         Ok(root) => root,
         Err(e) => {
             eprintln!("Error loading trusted root: {}", e);

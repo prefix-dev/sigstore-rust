@@ -12,13 +12,25 @@
 //! ```no_run
 //! use sigstore_trust_root::SigningConfig;
 //!
-//! // Load embedded production signing config
-//! let config = SigningConfig::production().unwrap();
+//! # async fn example() -> Result<(), sigstore_trust_root::Error> {
+//! // Fetch production signing config via TUF (recommended)
+//! let config = SigningConfig::production().await?;
 //!
 //! // Get the best Rekor endpoint (highest available version)
 //! if let Some(rekor) = config.get_rekor_url(None) {
 //!     println!("Rekor URL: {} (v{})", rekor.url, rekor.major_api_version);
 //! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! For offline use:
+//!
+//! ```
+//! use sigstore_trust_root::{SigningConfig, SIGSTORE_PRODUCTION_SIGNING_CONFIG};
+//!
+//! // Load embedded config (may be stale)
+//! let config = SigningConfig::from_json(SIGSTORE_PRODUCTION_SIGNING_CONFIG).unwrap();
 //! ```
 
 use chrono::{DateTime, Utc};
@@ -144,17 +156,29 @@ pub struct SigningConfig {
 }
 
 impl SigningConfig {
-    /// Load the embedded production signing config
-    pub fn production() -> Result<Self> {
-        Self::from_json(SIGSTORE_PRODUCTION_SIGNING_CONFIG)
-    }
-
-    /// Load the embedded staging signing config
-    pub fn staging() -> Result<Self> {
-        Self::from_json(SIGSTORE_STAGING_SIGNING_CONFIG)
-    }
-
     /// Parse signing config from JSON
+    ///
+    /// This parses a signing configuration from a JSON string. For offline use,
+    /// you can pass the embedded constants directly:
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use sigstore_trust_root::{SigningConfig, SIGSTORE_PRODUCTION_SIGNING_CONFIG};
+    ///
+    /// let config = SigningConfig::from_json(SIGSTORE_PRODUCTION_SIGNING_CONFIG).unwrap();
+    /// if let Some(rekor) = config.get_rekor_url(None) {
+    ///     println!("Rekor URL: {}", rekor.url);
+    /// }
+    /// ```
+    ///
+    /// For staging:
+    ///
+    /// ```
+    /// use sigstore_trust_root::{SigningConfig, SIGSTORE_STAGING_SIGNING_CONFIG};
+    ///
+    /// let config = SigningConfig::from_json(SIGSTORE_STAGING_SIGNING_CONFIG).unwrap();
+    /// ```
     pub fn from_json(json: &str) -> Result<Self> {
         let config: SigningConfig = serde_json::from_str(json)?;
 
@@ -254,16 +278,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_production_signing_config() {
-        let config = SigningConfig::production().expect("Failed to parse production config");
+    fn test_from_json_production() {
+        let config = SigningConfig::from_json(SIGSTORE_PRODUCTION_SIGNING_CONFIG)
+            .expect("Failed to parse production config");
         assert_eq!(config.media_type, SIGNING_CONFIG_MEDIA_TYPE);
         assert!(!config.ca_urls.is_empty());
         assert!(!config.rekor_tlog_urls.is_empty());
     }
 
     #[test]
-    fn test_parse_staging_signing_config() {
-        let config = SigningConfig::staging().expect("Failed to parse staging config");
+    fn test_from_json_staging() {
+        let config = SigningConfig::from_json(SIGSTORE_STAGING_SIGNING_CONFIG)
+            .expect("Failed to parse staging config");
         assert_eq!(config.media_type, SIGNING_CONFIG_MEDIA_TYPE);
         assert!(!config.ca_urls.is_empty());
         assert!(!config.rekor_tlog_urls.is_empty());
@@ -271,7 +297,8 @@ mod tests {
 
     #[test]
     fn test_get_rekor_url_highest_version() {
-        let config = SigningConfig::staging().expect("Failed to parse staging config");
+        let config = SigningConfig::from_json(SIGSTORE_STAGING_SIGNING_CONFIG)
+            .expect("Failed to parse staging config");
         if let Some(rekor) = config.get_rekor_url(None) {
             // Staging should have V2 available
             println!("Best Rekor: {} v{}", rekor.url, rekor.major_api_version);
@@ -280,7 +307,8 @@ mod tests {
 
     #[test]
     fn test_get_rekor_url_force_version() {
-        let config = SigningConfig::staging().expect("Failed to parse staging config");
+        let config = SigningConfig::from_json(SIGSTORE_STAGING_SIGNING_CONFIG)
+            .expect("Failed to parse staging config");
 
         // Force V1
         if let Some(rekor) = config.get_rekor_url(Some(1)) {

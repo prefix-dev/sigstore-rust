@@ -30,7 +30,8 @@ use sigstore_verify::{verify, Verifier, VerificationPolicy};
 use sigstore_trust_root::TrustedRoot;
 use sigstore_types::{Artifact, Bundle, Sha256Hash};
 
-let root = TrustedRoot::production()?;
+// Fetch trusted root via TUF (recommended - ensures up-to-date trust material)
+let root = TrustedRoot::production().await?;
 let bundle: Bundle = serde_json::from_str(bundle_json)?;
 let policy = VerificationPolicy::default();
 

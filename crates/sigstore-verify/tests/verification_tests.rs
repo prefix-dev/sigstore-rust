@@ -2,7 +2,7 @@
 //!
 //! These tests validate the complete verification flow using real bundles.
 
-use sigstore_trust_root::TrustedRoot;
+use sigstore_trust_root::{TrustedRoot, SIGSTORE_PRODUCTION_TRUSTED_ROOT};
 use sigstore_types::{LogIndex, Sha256Hash};
 use sigstore_verify::bundle::{validate_bundle, validate_bundle_with_options, ValidationOptions};
 use sigstore_verify::types::Bundle;
@@ -34,9 +34,10 @@ fn extract_artifact_digest(bundle: &Bundle) -> Option<Sha256Hash> {
     }
 }
 
-/// Get the production trusted root for tests
+/// Get the production trusted root for tests (using embedded data)
 fn production_root() -> TrustedRoot {
-    TrustedRoot::production().expect("Failed to load production trusted root")
+    TrustedRoot::from_json(SIGSTORE_PRODUCTION_TRUSTED_ROOT)
+        .expect("Failed to load production trusted root")
 }
 
 /// Real v0.3 bundle from sigstore-python tests

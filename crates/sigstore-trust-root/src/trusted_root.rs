@@ -432,20 +432,6 @@ pub const SIGSTORE_PRODUCTION_TRUSTED_ROOT: &str = include_str!("trusted_root.js
 /// This is the trusted root for Sigstore's staging/testing instance.
 pub const SIGSTORE_STAGING_TRUSTED_ROOT: &str = include_str!("trusted_root_staging.json");
 
-impl TrustedRoot {
-    /// Load the default Sigstore production trusted root
-    pub fn production() -> Result<Self> {
-        Self::from_json(SIGSTORE_PRODUCTION_TRUSTED_ROOT)
-    }
-
-    /// Load the Sigstore staging trusted root
-    ///
-    /// This is useful for testing against the Sigstore staging environment
-    /// at <https://sigstage.dev>.
-    pub fn staging() -> Result<Self> {
-        Self::from_json(SIGSTORE_STAGING_TRUSTED_ROOT)
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -495,16 +481,16 @@ mod tests {
     }
 
     #[test]
-    fn test_production_trusted_root() {
-        let root = TrustedRoot::production().unwrap();
+    fn test_from_json_production() {
+        let root = TrustedRoot::from_json(SIGSTORE_PRODUCTION_TRUSTED_ROOT).unwrap();
         assert!(!root.tlogs.is_empty());
         assert!(!root.certificate_authorities.is_empty());
         assert!(!root.ctlogs.is_empty());
     }
 
     #[test]
-    fn test_staging_trusted_root() {
-        let root = TrustedRoot::staging().unwrap();
+    fn test_from_json_staging() {
+        let root = TrustedRoot::from_json(SIGSTORE_STAGING_TRUSTED_ROOT).unwrap();
         assert!(!root.tlogs.is_empty());
         assert!(!root.certificate_authorities.is_empty());
         assert!(!root.ctlogs.is_empty());

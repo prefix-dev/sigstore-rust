@@ -8,7 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [features]
-default = []
+default = ["tuf"]
 tuf = ["tough", "tokio", "futures", "directories", "url", "tracing"]
 
 [dependencies]

@@ -44,8 +44,8 @@ sigstore-sign = "0.1"
 use sigstore_verify::{Verifier, VerificationPolicy};
 use sigstore_trust_root::TrustedRoot;
 
-// Load the trusted root (contains Fulcio CA, Rekor keys, etc.)
-let root = TrustedRoot::production()?;
+// Load the trusted root via TUF (recommended - ensures up-to-date trust material)
+let root = TrustedRoot::production().await?;
 let verifier = Verifier::new(&root);
 
 // Parse the bundle (contains signature, certificate, transparency log entry)
