@@ -16,11 +16,15 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
+use std::time::Duration;
 use tokio::net::TcpListener;
 use url::Url;
 
 /// Standard OAuth out-of-band redirect URI
 const OOB_REDIRECT_URI: &str = "urn:ietf:wg:oauth:2.0:oob";
+
+/// Timeout for waiting for the browser callback (5 minutes)
+const CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// OAuth configuration for a provider
 #[derive(Debug, Clone)]
@@ -104,7 +108,7 @@ pub struct DefaultAuthCallback;
 
 impl crate::templates::HtmlTemplates for DefaultAuthCallback {
     fn success_html(&self) -> &str {
-        &crate::templates::DEFAULT_SUCCESS_HTML
+        crate::templates::default_success_html()
     }
 
     fn error_html(&self, error: &str) -> String {
@@ -279,8 +283,18 @@ impl OAuthClient {
             callback.auth_url_ready(&auth_url, AuthMode::BrowserRedirect);
             callback.waiting_for_redirect();
 
-            // Wait for the callback
-            let code = self.wait_for_callback(&listener, state, callback).await?;
+            // Wait for the callback with timeout
+            let code = tokio::time::timeout(
+                CALLBACK_TIMEOUT,
+                self.wait_for_callback(&listener, state, callback),
+            )
+            .await
+            .map_err(|_| {
+                Error::OAuth(format!(
+                    "timed out waiting for browser callback after {} seconds",
+                    CALLBACK_TIMEOUT.as_secs()
+                ))
+            })??;
 
             // Exchange code for token
             let token = self.exchange_code(&code, verifier, &redirect_uri).await?;
@@ -307,7 +321,8 @@ impl OAuthClient {
 
         callback.auth_url_ready(&auth_url, AuthMode::OutOfBand);
 
-        // Get code from user
+        // Get code from user (this briefly blocks the async runtime, but it's
+        // acceptable for interactive user input of a single line)
         let code = callback
             .prompt_for_code()
             .map_err(|e| Error::OAuth(format!("failed to read code: {}", e)))?;

@@ -15,15 +15,22 @@ const ERROR_HTML_TEMPLATE: &str = include_str!("templates/error.html");
 /// Placeholder for the Sigstore logo in HTML templates
 const LOGO_PLACEHOLDER: &str = "{{SIGSTORE_LOGO}}";
 
-use std::sync::LazyLock;
+use std::sync::OnceLock;
 
-/// Default success page HTML with Sigstore branding (logo embedded)
-pub static DEFAULT_SUCCESS_HTML: LazyLock<String> =
-    LazyLock::new(|| SUCCESS_HTML_TEMPLATE.replace(LOGO_PLACEHOLDER, SIGSTORE_LOGO_SVG));
+static DEFAULT_SUCCESS_HTML: OnceLock<String> = OnceLock::new();
+static DEFAULT_ERROR_HTML: OnceLock<String> = OnceLock::new();
 
-/// Default error page HTML with Sigstore branding (logo embedded)
-pub static DEFAULT_ERROR_HTML: LazyLock<String> =
-    LazyLock::new(|| ERROR_HTML_TEMPLATE.replace(LOGO_PLACEHOLDER, SIGSTORE_LOGO_SVG));
+/// Returns the default success page HTML with Sigstore branding (logo embedded)
+pub fn default_success_html() -> &'static str {
+    DEFAULT_SUCCESS_HTML
+        .get_or_init(|| SUCCESS_HTML_TEMPLATE.replace(LOGO_PLACEHOLDER, SIGSTORE_LOGO_SVG))
+}
+
+/// Returns the default error page HTML with Sigstore branding (logo embedded)
+pub fn default_error_html() -> &'static str {
+    DEFAULT_ERROR_HTML
+        .get_or_init(|| ERROR_HTML_TEMPLATE.replace(LOGO_PLACEHOLDER, SIGSTORE_LOGO_SVG))
+}
 
 /// Trait for customizing the HTML pages shown during OAuth callback.
 ///
@@ -32,7 +39,7 @@ pub static DEFAULT_ERROR_HTML: LazyLock<String> =
 pub trait HtmlTemplates {
     /// Returns the HTML to show when authentication succeeds.
     fn success_html(&self) -> &str {
-        &DEFAULT_SUCCESS_HTML
+        default_success_html()
     }
 
     /// Returns the HTML to show when authentication fails.
@@ -40,7 +47,7 @@ pub trait HtmlTemplates {
     /// The `error` parameter contains the error message that occurred.
     /// You can embed this in your HTML template.
     fn error_html(&self, _error: &str) -> String {
-        DEFAULT_ERROR_HTML.to_string()
+        default_error_html().to_string()
     }
 }
 
@@ -50,12 +57,12 @@ pub struct DefaultTemplates;
 
 impl HtmlTemplates for DefaultTemplates {
     fn success_html(&self) -> &str {
-        &DEFAULT_SUCCESS_HTML
+        default_success_html()
     }
 
     fn error_html(&self, error: &str) -> String {
         // Inject the error message into the template
-        let html = DEFAULT_ERROR_HTML.replace(
+        let html = default_error_html().replace(
             r#"<div class="error-details" id="error-details" style="display: none;">"#,
             &format!(
                 r#"<div class="error-details" id="error-details">{}"#,
