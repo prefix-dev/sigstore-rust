@@ -4,9 +4,9 @@
 //!
 //! # Usage
 //!
-//! Sign a file (interactive OAuth flow, requires `interactive` feature):
+//! Sign a file (opens browser, or prompts for code if browser unavailable):
 //! ```sh
-//! cargo run -p sigstore-sign --features interactive --example sign_blob -- artifact.txt -o artifact.sigstore.json
+//! cargo run -p sigstore-sign --features browser --example sign_blob -- artifact.txt -o artifact.sigstore.json
 //! ```
 //!
 //! Sign with an identity token (e.g., from GitHub Actions):
@@ -18,7 +18,7 @@
 //!
 //! Use Rekor V2 API (when available):
 //! ```sh
-//! cargo run -p sigstore-sign --features interactive --example sign_blob -- --v2 artifact.txt
+//! cargo run -p sigstore-sign --features browser --example sign_blob -- --v2 artifact.txt
 //! ```
 //!
 //! # In GitHub Actions
@@ -36,11 +36,7 @@
 //!         run: cargo run -p sigstore-sign --example sign_blob -- artifact.txt -o artifact.sigstore.json
 //! ```
 
-#[cfg(not(feature = "interactive"))]
-use sigstore_oidc::get_identity_token;
-#[cfg(feature = "interactive")]
-use sigstore_oidc::get_interactive_token;
-use sigstore_oidc::IdentityToken;
+use sigstore_oidc::{get_identity_token, IdentityToken};
 use sigstore_rekor::RekorApiVersion;
 use sigstore_sign::{SigningConfig, SigningContext};
 
@@ -252,31 +248,13 @@ async fn get_token(explicit_token: Option<String>) -> Result<IdentityToken, Stri
     }
 
     // 3. Fall back to interactive OAuth
+    // This automatically opens browser if available, or prompts for manual code entry
     println!("  Starting interactive authentication...");
     println!();
 
-    #[cfg(feature = "interactive")]
-    {
-        get_interactive_token()
-            .await
-            .map_err(|e| format!("OAuth failed: {}", e))
-    }
-
-    #[cfg(not(feature = "interactive"))]
-    {
-        get_identity_token(|response| {
-            println!("Please visit: {}", response.verification_uri);
-            if let Some(complete_uri) = &response.verification_uri_complete {
-                println!("Or open: {}", complete_uri);
-            }
-            println!();
-            println!("Enter code: {}", response.user_code);
-            println!();
-            println!("Waiting for authentication...");
-        })
+    get_identity_token()
         .await
         .map_err(|e| format!("OAuth failed: {}", e))
-    }
 }
 
 fn print_usage(program: &str) {

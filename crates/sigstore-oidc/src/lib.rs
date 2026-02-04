@@ -5,18 +5,15 @@
 
 pub mod error;
 pub mod oauth;
-#[cfg(feature = "interactive")]
 pub mod templates;
 pub mod token;
 
 pub use error::{Error, Result};
-pub use oauth::{get_identity_token, DeviceCodeResponse, OAuthClient, OAuthConfig};
-#[cfg(feature = "interactive")]
 pub use oauth::{
-    get_interactive_token, get_interactive_token_with_callback, BrowserResult,
-    DefaultInteractiveCallback, InteractiveCallback,
+    get_identity_token, get_identity_token_with_callback, get_identity_token_with_options,
+    AuthCallback, AuthMode, AuthOptions, DefaultAuthCallback, OAuthClient, OAuthConfig,
+    TokenResponse,
 };
-#[cfg(feature = "interactive")]
 pub use templates::{DefaultTemplates, HtmlTemplates, MinimalTemplates};
 pub use token::{issuers, Audience, FederatedClaims, IdentityToken, TokenClaims};
 

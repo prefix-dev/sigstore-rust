@@ -29,5 +29,7 @@ hex = { workspace = true }
 
 [features]
 default = []
-# Enable interactive browser-based authentication
-interactive = ["sigstore-oidc/interactive"]
+# Enable automatic browser opening for authentication
+browser = ["sigstore-oidc/browser"]
+# Backwards compatibility alias
+interactive = ["browser"]

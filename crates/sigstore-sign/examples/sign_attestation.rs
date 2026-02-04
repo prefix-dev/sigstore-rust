@@ -39,11 +39,7 @@
 //!     crates/sigstore-verify/test_data/bundles/signed-package-2.1.0-hb0f4dca_0.conda
 //! ```
 
-#[cfg(not(feature = "interactive"))]
-use sigstore_oidc::get_identity_token;
-#[cfg(feature = "interactive")]
-use sigstore_oidc::get_interactive_token;
-use sigstore_oidc::IdentityToken;
+use sigstore_oidc::{get_identity_token, IdentityToken};
 use sigstore_sign::{Attestation, SigningConfig, SigningContext};
 
 use std::env;
@@ -258,31 +254,14 @@ async fn get_token(explicit_token: Option<String>) -> Result<IdentityToken, Stri
         return Ok(token);
     }
 
+    // Fall back to interactive OAuth
+    // This automatically opens browser if available, or prompts for manual code entry
     println!("  Starting interactive authentication...");
     println!();
 
-    #[cfg(feature = "interactive")]
-    {
-        get_interactive_token()
-            .await
-            .map_err(|e| format!("OAuth failed: {}", e))
-    }
-
-    #[cfg(not(feature = "interactive"))]
-    {
-        get_identity_token(|response| {
-            println!("Please visit: {}", response.verification_uri);
-            if let Some(complete_uri) = &response.verification_uri_complete {
-                println!("Or open: {}", complete_uri);
-            }
-            println!();
-            println!("Enter code: {}", response.user_code);
-            println!();
-            println!("Waiting for authentication...");
-        })
+    get_identity_token()
         .await
         .map_err(|e| format!("OAuth failed: {}", e))
-    }
 }
 
 fn print_usage(program: &str) {

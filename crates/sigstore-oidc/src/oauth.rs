@@ -1,26 +1,26 @@
 //! OAuth flow implementation for interactive token acquisition
 //!
-//! This module implements OAuth 2.0 flows for obtaining identity tokens
-//! from Sigstore's OAuth provider:
+//! This module implements OAuth 2.0 Authorization Code Flow with PKCE for obtaining
+//! identity tokens from Sigstore's OAuth provider.
 //!
-//! - **Authorization Code Flow with PKCE**: Uses a local redirect server for
-//!   seamless browser-based authentication. This is the preferred method.
+//! The flow automatically selects between:
+//! - **Browser mode**: Opens the user's browser and receives the code via a local redirect server
+//! - **Out-of-band (OOB) mode**: User manually visits the URL and enters the code
 //!
-//! - **Device Code Flow**: Fallback for environments where a local server
-//!   cannot be started. User manually enters a code.
+//! OOB mode is used when the browser cannot be opened (headless environment, remote machine)
+//! or when the `browser` feature is not enabled.
 
 use crate::error::{Error, Result};
 use crate::token::IdentityToken;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-
-#[cfg(feature = "interactive")]
 use std::io::{BufRead, BufReader, Write};
-#[cfg(feature = "interactive")]
 use tokio::net::TcpListener;
-#[cfg(feature = "interactive")]
 use url::Url;
+
+/// Standard OAuth out-of-band redirect URI
+const OOB_REDIRECT_URI: &str = "urn:ietf:wg:oauth:2.0:oob";
 
 /// OAuth configuration for a provider
 #[derive(Debug, Clone)]
@@ -29,8 +29,6 @@ pub struct OAuthConfig {
     pub auth_url: String,
     /// Token endpoint
     pub token_url: String,
-    /// Device authorization endpoint
-    pub device_auth_url: String,
     /// Client ID
     pub client_id: String,
     /// Scopes to request
@@ -43,29 +41,10 @@ impl OAuthConfig {
         Self {
             auth_url: "https://oauth2.sigstore.dev/auth/auth".to_string(),
             token_url: "https://oauth2.sigstore.dev/auth/token".to_string(),
-            device_auth_url: "https://oauth2.sigstore.dev/auth/device/code".to_string(),
             client_id: "sigstore".to_string(),
             scopes: vec!["openid".to_string(), "email".to_string()],
         }
     }
-}
-
-/// Device code flow response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeviceCodeResponse {
-    /// The device code
-    pub device_code: String,
-    /// User code to enter
-    pub user_code: String,
-    /// Verification URI
-    pub verification_uri: String,
-    /// Complete verification URI with code
-    #[serde(default)]
-    pub verification_uri_complete: Option<String>,
-    /// Expiration in seconds
-    pub expires_in: u64,
-    /// Polling interval in seconds
-    pub interval: u64,
 }
 
 /// Token response from the OAuth server
@@ -83,7 +62,93 @@ pub struct TokenResponse {
     pub id_token: Option<String>,
 }
 
-/// OAuth client for device code flow
+/// The authentication mode being used
+#[derive(Debug, Clone)]
+pub enum AuthMode {
+    /// Browser was opened, redirect server is waiting for callback
+    BrowserRedirect,
+    /// Out-of-band mode - user must manually visit URL and enter code
+    OutOfBand,
+}
+
+/// Options for authentication
+#[derive(Debug, Clone, Default)]
+pub struct AuthOptions {
+    /// Force OOB mode even when browser opening might succeed
+    pub force_oob: bool,
+}
+
+/// Callback trait for customizing the authentication UX
+pub trait AuthCallback: crate::templates::HtmlTemplates {
+    /// Called when the auth URL is ready
+    ///
+    /// In `BrowserRedirect` mode, the browser has been opened.
+    /// In `OutOfBand` mode, the user must navigate to the URL manually.
+    fn auth_url_ready(&self, url: &str, mode: AuthMode);
+
+    /// Called in OOB mode to prompt user for the authorization code.
+    ///
+    /// This should read user input (e.g., from stdin) and return the code.
+    /// Only called when mode is `OutOfBand`.
+    fn prompt_for_code(&self) -> std::io::Result<String>;
+
+    /// Called when waiting for the redirect callback (BrowserRedirect mode only)
+    fn waiting_for_redirect(&self);
+
+    /// Called when authentication completes successfully
+    fn auth_complete(&self);
+}
+
+/// Default callback that prints to stdout and uses Sigstore-branded templates
+pub struct DefaultAuthCallback;
+
+impl crate::templates::HtmlTemplates for DefaultAuthCallback {
+    fn success_html(&self) -> &str {
+        crate::templates::DEFAULT_SUCCESS_HTML
+    }
+
+    fn error_html(&self, error: &str) -> String {
+        crate::templates::DefaultTemplates.error_html(error)
+    }
+}
+
+impl AuthCallback for DefaultAuthCallback {
+    fn auth_url_ready(&self, url: &str, mode: AuthMode) {
+        match mode {
+            AuthMode::BrowserRedirect => {
+                println!("Opening browser for authentication...");
+                println!();
+                println!("If the browser doesn't open, visit:");
+                println!("  {}", url);
+            }
+            AuthMode::OutOfBand => {
+                println!("Go to the following link in your browser:");
+                println!();
+                println!("  {}", url);
+            }
+        }
+        println!();
+    }
+
+    fn prompt_for_code(&self) -> std::io::Result<String> {
+        use std::io;
+        print!("Enter verification code: ");
+        io::stdout().flush()?;
+        let mut code = String::new();
+        io::stdin().lock().read_line(&mut code)?;
+        Ok(code.trim().to_string())
+    }
+
+    fn waiting_for_redirect(&self) {
+        println!("Waiting for authentication in browser...");
+    }
+
+    fn auth_complete(&self) {
+        println!("Authentication successful!");
+    }
+}
+
+/// OAuth client for authorization code flow
 pub struct OAuthClient {
     config: OAuthConfig,
     client: reqwest::Client,
@@ -103,238 +168,92 @@ impl OAuthClient {
         Self::new(OAuthConfig::sigstore())
     }
 
-    /// Start the device code flow
-    ///
-    /// Returns the device code response which contains the user code
-    /// and verification URI to show to the user, along with the PKCE verifier.
-    pub async fn start_device_flow(&self) -> Result<(DeviceCodeResponse, String)> {
-        // Generate PKCE pair
+    /// Generate a PKCE verifier and challenge
+    fn generate_pkce() -> (String, String) {
         let mut rng = rand::rng();
         let mut verifier_bytes = [0u8; 32];
         rng.fill(&mut verifier_bytes);
         let verifier = URL_SAFE_NO_PAD.encode(verifier_bytes);
 
-        // Compute PKCE challenge using SHA-256
         let challenge_bytes = sigstore_crypto::sha256(verifier.as_bytes());
         let challenge = URL_SAFE_NO_PAD.encode(challenge_bytes);
 
-        let params = [
-            ("client_id", self.config.client_id.as_str()),
-            ("scope", &self.config.scopes.join(" ")),
-            ("code_challenge", &challenge),
-            ("code_challenge_method", "S256"),
-        ];
-
-        let response = self
-            .client
-            .post(&self.config.device_auth_url)
-            .form(&params)
-            .send()
-            .await
-            .map_err(|e| Error::Http(e.to_string()))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(Error::OAuth(format!(
-                "device auth failed: {} - {}",
-                status, body
-            )));
-        }
-
-        let response_data = response
-            .json()
-            .await
-            .map_err(|e| Error::OAuth(format!("failed to parse device code response: {}", e)))?;
-
-        Ok((response_data, verifier))
+        (verifier, challenge)
     }
 
-    /// Poll for the token after user authorization
+    /// Generate a random state for CSRF protection
+    fn generate_state() -> String {
+        let mut rng = rand::rng();
+        let mut state_bytes = [0u8; 16];
+        rng.fill(&mut state_bytes);
+        URL_SAFE_NO_PAD.encode(state_bytes)
+    }
+
+    /// Build the authorization URL
+    fn build_auth_url(&self, redirect_uri: &str, challenge: &str, state: &str) -> Result<String> {
+        let mut auth_url = Url::parse(&self.config.auth_url)
+            .map_err(|e| Error::OAuth(format!("invalid auth URL: {}", e)))?;
+        auth_url
+            .query_pairs_mut()
+            .append_pair("client_id", &self.config.client_id)
+            .append_pair("redirect_uri", redirect_uri)
+            .append_pair("response_type", "code")
+            .append_pair("scope", &self.config.scopes.join(" "))
+            .append_pair("code_challenge", challenge)
+            .append_pair("code_challenge_method", "S256")
+            .append_pair("state", state);
+        Ok(auth_url.to_string())
+    }
+
+    /// Check if we should attempt browser opening
+    #[cfg(feature = "browser")]
+    fn should_try_browser() -> bool {
+        true
+    }
+
+    #[cfg(not(feature = "browser"))]
+    fn should_try_browser() -> bool {
+        false
+    }
+
+    /// Perform authentication using the authorization code flow with PKCE.
     ///
-    /// This should be called after showing the user the verification URI.
-    /// It will poll the token endpoint until the user completes authorization
-    /// or the device code expires.
-    pub async fn poll_for_token(
+    /// This method automatically selects between browser and OOB mode:
+    /// 1. If `browser` feature is enabled, attempts to open the browser
+    /// 2. If browser opens successfully, waits for the redirect callback
+    /// 3. If browser fails or feature is disabled, falls back to OOB mode
+    pub async fn auth(&self, callback: impl AuthCallback) -> Result<IdentityToken> {
+        self.auth_with_options(callback, AuthOptions::default())
+            .await
+    }
+
+    /// Perform authentication with custom options
+    pub async fn auth_with_options(
         &self,
-        device_code: &str,
-        verifier: &str,
-        interval: u64,
+        callback: impl AuthCallback,
+        options: AuthOptions,
     ) -> Result<IdentityToken> {
-        let params = [
-            ("client_id", self.config.client_id.as_str()),
-            ("device_code", device_code),
-            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-            ("code_verifier", verifier),
-        ];
+        let (verifier, challenge) = Self::generate_pkce();
+        let state = Self::generate_state();
 
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
+        let use_oob = options.force_oob || !Self::should_try_browser();
 
-            let response = self
-                .client
-                .post(&self.config.token_url)
-                .form(&params)
-                .send()
+        if use_oob {
+            self.auth_oob(&callback, &verifier, &challenge, &state)
                 .await
-                .map_err(|e| Error::Http(e.to_string()))?;
-
-            if response.status().is_success() {
-                let token_response: TokenResponse = response
-                    .json()
-                    .await
-                    .map_err(|e| Error::OAuth(format!("failed to parse token response: {}", e)))?;
-
-                let id_token = token_response
-                    .id_token
-                    .ok_or_else(|| Error::OAuth("no id_token in response".to_string()))?;
-
-                return IdentityToken::from_jwt(&id_token);
-            }
-
-            // Check for polling errors
-            #[derive(Deserialize)]
-            struct ErrorResponse {
-                error: String,
-            }
-
-            let error: ErrorResponse = response
-                .json()
+        } else {
+            self.auth_browser(&callback, &verifier, &challenge, &state)
                 .await
-                .map_err(|e| Error::OAuth(format!("failed to parse error response: {}", e)))?;
-
-            match error.error.as_str() {
-                "authorization_pending" => {
-                    // Keep polling
-                    continue;
-                }
-                "slow_down" => {
-                    // Increase interval and continue
-                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-                    continue;
-                }
-                "expired_token" => {
-                    return Err(Error::OAuth("device code expired".to_string()));
-                }
-                "access_denied" => {
-                    return Err(Error::OAuth("user denied authorization".to_string()));
-                }
-                _ => {
-                    return Err(Error::OAuth(format!("token error: {}", error.error)));
-                }
-            }
         }
     }
 
-    /// Perform the complete device code flow
-    ///
-    /// This combines `start_device_flow` and `poll_for_token` with a callback
-    /// to display the verification URL to the user.
-    pub async fn device_flow<F>(&self, display: F) -> Result<IdentityToken>
-    where
-        F: FnOnce(&DeviceCodeResponse),
-    {
-        let (device_response, verifier) = self.start_device_flow().await?;
-        display(&device_response);
-        self.poll_for_token(
-            &device_response.device_code,
-            &verifier,
-            device_response.interval,
-        )
-        .await
-    }
-}
-
-/// Convenience function to get an identity token using the device code flow
-pub async fn get_identity_token<F>(display: F) -> Result<IdentityToken>
-where
-    F: FnOnce(&DeviceCodeResponse),
-{
-    OAuthClient::sigstore().device_flow(display).await
-}
-
-/// Result of attempting to open a browser
-#[cfg(feature = "interactive")]
-#[derive(Debug)]
-pub enum BrowserResult {
-    /// Browser was opened successfully
-    Opened,
-    /// Failed to open browser, user should open URL manually
-    Failed(String),
-}
-
-/// Callback for interactive authentication status updates
-#[cfg(feature = "interactive")]
-pub trait InteractiveCallback: crate::templates::HtmlTemplates {
-    /// Called when the auth URL is ready
-    fn auth_url_ready(&self, url: &str, browser_result: BrowserResult);
-
-    /// Called when waiting for user to complete authentication
-    fn waiting_for_auth(&self);
-
-    /// Called when authentication is successful
-    fn auth_complete(&self);
-}
-
-/// Default callback that prints to stdout and uses Sigstore-branded templates
-#[cfg(feature = "interactive")]
-pub struct DefaultInteractiveCallback;
-
-#[cfg(feature = "interactive")]
-impl crate::templates::HtmlTemplates for DefaultInteractiveCallback {
-    fn success_html(&self) -> &str {
-        crate::templates::DEFAULT_SUCCESS_HTML
-    }
-
-    fn error_html(&self, error: &str) -> String {
-        crate::templates::DefaultTemplates.error_html(error)
-    }
-}
-
-#[cfg(feature = "interactive")]
-impl InteractiveCallback for DefaultInteractiveCallback {
-    fn auth_url_ready(&self, url: &str, browser_result: BrowserResult) {
-        match browser_result {
-            BrowserResult::Opened => {
-                println!("Opening browser for authentication...");
-                println!();
-                println!("If the browser doesn't open, visit:");
-                println!("  {}", url);
-            }
-            BrowserResult::Failed(_) => {
-                println!("Please open this URL in your browser:");
-                println!();
-                println!("  {}", url);
-            }
-        }
-        println!();
-    }
-
-    fn waiting_for_auth(&self) {
-        println!("Waiting for authentication in browser...");
-    }
-
-    fn auth_complete(&self) {
-        println!("Authentication successful!");
-    }
-}
-
-#[cfg(feature = "interactive")]
-impl OAuthClient {
-    /// Perform interactive authentication using the authorization code flow with PKCE.
-    ///
-    /// This method:
-    /// 1. Starts a local HTTP server on an available port
-    /// 2. Opens the user's browser to the authorization URL
-    /// 3. Waits for the OAuth callback with the authorization code
-    /// 4. Exchanges the code for tokens
-    ///
-    /// If the browser cannot be opened, the URL is printed for manual navigation.
-    ///
-    /// Requires the `interactive` feature.
-    pub async fn interactive_auth(
+    /// Browser-based auth flow with redirect server
+    async fn auth_browser(
         &self,
-        callback: impl InteractiveCallback,
+        callback: &impl AuthCallback,
+        verifier: &str,
+        challenge: &str,
+        state: &str,
     ) -> Result<IdentityToken> {
         // Start local server on a random available port
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -347,49 +266,56 @@ impl OAuthClient {
 
         let redirect_uri = format!("http://127.0.0.1:{}/callback", local_addr.port());
 
-        // Generate PKCE pair
-        let mut rng = rand::rng();
-        let mut verifier_bytes = [0u8; 32];
-        rng.fill(&mut verifier_bytes);
-        let verifier = URL_SAFE_NO_PAD.encode(verifier_bytes);
-
-        // Compute PKCE challenge using SHA-256
-        let challenge_bytes = sigstore_crypto::sha256(verifier.as_bytes());
-        let challenge = URL_SAFE_NO_PAD.encode(challenge_bytes);
-
-        // Generate state for CSRF protection
-        let mut state_bytes = [0u8; 16];
-        rng.fill(&mut state_bytes);
-        let state = URL_SAFE_NO_PAD.encode(state_bytes);
-
         // Build authorization URL
-        let mut auth_url = Url::parse(&self.config.auth_url)
-            .map_err(|e| Error::OAuth(format!("invalid auth URL: {}", e)))?;
-        auth_url
-            .query_pairs_mut()
-            .append_pair("client_id", &self.config.client_id)
-            .append_pair("redirect_uri", &redirect_uri)
-            .append_pair("response_type", "code")
-            .append_pair("scope", &self.config.scopes.join(" "))
-            .append_pair("code_challenge", &challenge)
-            .append_pair("code_challenge_method", "S256")
-            .append_pair("state", &state);
-        let auth_url = auth_url.to_string();
+        let auth_url = self.build_auth_url(&redirect_uri, challenge, state)?;
 
         // Try to open browser
-        let browser_result = match open::that(&auth_url) {
-            Ok(()) => BrowserResult::Opened,
-            Err(e) => BrowserResult::Failed(e.to_string()),
-        };
+        #[cfg(feature = "browser")]
+        let browser_opened = open::that(&auth_url).is_ok();
+        #[cfg(not(feature = "browser"))]
+        let browser_opened = false;
 
-        callback.auth_url_ready(&auth_url, browser_result);
-        callback.waiting_for_auth();
+        if browser_opened {
+            callback.auth_url_ready(&auth_url, AuthMode::BrowserRedirect);
+            callback.waiting_for_redirect();
 
-        // Wait for the callback
-        let code = self.wait_for_callback(&listener, &state, &callback).await?;
+            // Wait for the callback
+            let code = self.wait_for_callback(&listener, state, callback).await?;
+
+            // Exchange code for token
+            let token = self.exchange_code(&code, verifier, &redirect_uri).await?;
+
+            callback.auth_complete();
+            Ok(token)
+        } else {
+            // Fall back to OOB mode
+            drop(listener);
+            self.auth_oob(callback, verifier, challenge, state).await
+        }
+    }
+
+    /// Out-of-band auth flow where user manually enters the code
+    async fn auth_oob(
+        &self,
+        callback: &impl AuthCallback,
+        verifier: &str,
+        challenge: &str,
+        state: &str,
+    ) -> Result<IdentityToken> {
+        // Build auth URL with OOB redirect
+        let auth_url = self.build_auth_url(OOB_REDIRECT_URI, challenge, state)?;
+
+        callback.auth_url_ready(&auth_url, AuthMode::OutOfBand);
+
+        // Get code from user
+        let code = callback
+            .prompt_for_code()
+            .map_err(|e| Error::OAuth(format!("failed to read code: {}", e)))?;
 
         // Exchange code for token
-        let token = self.exchange_code(&code, &verifier, &redirect_uri).await?;
+        let token = self
+            .exchange_code(&code, verifier, OOB_REDIRECT_URI)
+            .await?;
 
         callback.auth_complete();
         Ok(token)
@@ -400,7 +326,7 @@ impl OAuthClient {
         &self,
         listener: &TcpListener,
         expected_state: &str,
-        callback: &impl InteractiveCallback,
+        callback: &impl AuthCallback,
     ) -> Result<String> {
         // Accept a single connection
         let (stream, _) = listener
@@ -535,33 +461,43 @@ impl OAuthClient {
     }
 }
 
-/// Get an identity token using interactive browser-based authentication.
+/// Get an identity token using interactive authentication.
 ///
-/// This is the recommended method for interactive CLI usage. It:
-/// 1. Starts a local server to receive the OAuth callback
-/// 2. Opens the user's browser for authentication
-/// 3. Automatically receives the token without manual code entry
+/// This function automatically selects between browser and OOB mode:
+/// 1. If `browser` feature is enabled, attempts to open the browser
+/// 2. If browser opens successfully, receives the token via redirect
+/// 3. If browser fails or feature is disabled, prompts for manual code entry
 ///
-/// If the browser cannot be opened, the URL is printed for manual navigation.
+/// # Example
 ///
-/// Requires the `interactive` feature.
-#[cfg(feature = "interactive")]
-pub async fn get_interactive_token() -> Result<IdentityToken> {
-    OAuthClient::sigstore()
-        .interactive_auth(DefaultInteractiveCallback)
-        .await
+/// ```no_run
+/// use sigstore_oidc::get_identity_token;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let token = get_identity_token().await?;
+///     println!("Got token for: {}", token.subject());
+///     Ok(())
+/// }
+/// ```
+pub async fn get_identity_token() -> Result<IdentityToken> {
+    OAuthClient::sigstore().auth(DefaultAuthCallback).await
 }
 
-/// Get an identity token using interactive authentication with a custom callback.
-///
-/// This allows customizing the messages shown during authentication.
-///
-/// Requires the `interactive` feature.
-#[cfg(feature = "interactive")]
-pub async fn get_interactive_token_with_callback(
-    callback: impl InteractiveCallback,
+/// Get an identity token with a custom callback for UX customization.
+pub async fn get_identity_token_with_callback(
+    callback: impl AuthCallback,
 ) -> Result<IdentityToken> {
-    OAuthClient::sigstore().interactive_auth(callback).await
+    OAuthClient::sigstore().auth(callback).await
+}
+
+/// Get an identity token with options.
+///
+/// Use this to force OOB mode or customize other behavior.
+pub async fn get_identity_token_with_options(options: AuthOptions) -> Result<IdentityToken> {
+    OAuthClient::sigstore()
+        .auth_with_options(DefaultAuthCallback, options)
+        .await
 }
 
 #[cfg(test)]
@@ -574,5 +510,26 @@ mod tests {
         assert_eq!(config.client_id, "sigstore");
         assert!(config.scopes.contains(&"openid".to_string()));
         assert!(config.scopes.contains(&"email".to_string()));
+    }
+
+    #[test]
+    fn test_pkce_generation() {
+        let (verifier, challenge) = OAuthClient::generate_pkce();
+        // Verifier should be 43 chars (32 bytes base64url encoded)
+        assert_eq!(verifier.len(), 43);
+        // Challenge should be 43 chars (32 bytes SHA256 then base64url encoded)
+        assert_eq!(challenge.len(), 43);
+        // They should be different
+        assert_ne!(verifier, challenge);
+    }
+
+    #[test]
+    fn test_state_generation() {
+        let state1 = OAuthClient::generate_state();
+        let state2 = OAuthClient::generate_state();
+        // State should be 22 chars (16 bytes base64url encoded)
+        assert_eq!(state1.len(), 22);
+        // Should be random
+        assert_ne!(state1, state2);
     }
 }
