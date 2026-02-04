@@ -104,7 +104,7 @@ pub struct DefaultAuthCallback;
 
 impl crate::templates::HtmlTemplates for DefaultAuthCallback {
     fn success_html(&self) -> &str {
-        crate::templates::DEFAULT_SUCCESS_HTML
+        &crate::templates::DEFAULT_SUCCESS_HTML
     }
 
     fn error_html(&self, error: &str) -> String {

@@ -3,11 +3,27 @@
 //! This module provides customizable HTML templates for the authentication
 //! success and error pages shown in the browser after OAuth callback.
 
-/// Default success page HTML with Sigstore branding
-pub const DEFAULT_SUCCESS_HTML: &str = include_str!("templates/success.html");
+/// Sigstore logo SVG
+const SIGSTORE_LOGO_SVG: &str = include_str!("templates/sigstore-logo.svg");
 
-/// Default error page HTML with Sigstore branding
-pub const DEFAULT_ERROR_HTML: &str = include_str!("templates/error.html");
+/// Raw success page HTML template (with placeholder)
+const SUCCESS_HTML_TEMPLATE: &str = include_str!("templates/success.html");
+
+/// Raw error page HTML template (with placeholder)
+const ERROR_HTML_TEMPLATE: &str = include_str!("templates/error.html");
+
+/// Placeholder for the Sigstore logo in HTML templates
+const LOGO_PLACEHOLDER: &str = "{{SIGSTORE_LOGO}}";
+
+use std::sync::LazyLock;
+
+/// Default success page HTML with Sigstore branding (logo embedded)
+pub static DEFAULT_SUCCESS_HTML: LazyLock<String> =
+    LazyLock::new(|| SUCCESS_HTML_TEMPLATE.replace(LOGO_PLACEHOLDER, SIGSTORE_LOGO_SVG));
+
+/// Default error page HTML with Sigstore branding (logo embedded)
+pub static DEFAULT_ERROR_HTML: LazyLock<String> =
+    LazyLock::new(|| ERROR_HTML_TEMPLATE.replace(LOGO_PLACEHOLDER, SIGSTORE_LOGO_SVG));
 
 /// Trait for customizing the HTML pages shown during OAuth callback.
 ///
@@ -16,7 +32,7 @@ pub const DEFAULT_ERROR_HTML: &str = include_str!("templates/error.html");
 pub trait HtmlTemplates {
     /// Returns the HTML to show when authentication succeeds.
     fn success_html(&self) -> &str {
-        DEFAULT_SUCCESS_HTML
+        &DEFAULT_SUCCESS_HTML
     }
 
     /// Returns the HTML to show when authentication fails.
@@ -34,7 +50,7 @@ pub struct DefaultTemplates;
 
 impl HtmlTemplates for DefaultTemplates {
     fn success_html(&self) -> &str {
-        DEFAULT_SUCCESS_HTML
+        &DEFAULT_SUCCESS_HTML
     }
 
     fn error_html(&self, error: &str) -> String {
@@ -114,6 +130,9 @@ mod tests {
         let html = templates.success_html();
         assert!(html.contains("Authentication Successful"));
         assert!(html.contains("sigstore"));
+        // Verify logo is embedded
+        assert!(html.contains("<svg"));
+        assert!(!html.contains("{{SIGSTORE_LOGO}}"));
     }
 
     #[test]
@@ -122,6 +141,9 @@ mod tests {
         let html = templates.error_html("test error message");
         assert!(html.contains("Authentication Failed"));
         assert!(html.contains("test error message"));
+        // Verify logo is embedded
+        assert!(html.contains("<svg"));
+        assert!(!html.contains("{{SIGSTORE_LOGO}}"));
     }
 
     #[test]
