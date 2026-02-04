@@ -19,8 +19,9 @@ dependencies = [
 
 [[package]]
 name = "ambient-id"
-version = "0.0.9"
-source = "git+https://github.com/pavelzw/ambient-id?branch=reqwest-middleware-feature#0b0080d1858b35e0c29f30b4f6247ddd54ac799e"
+version = "0.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e61320f0a8ca54a235b0e49307b16dcade6eecd441b1f8a8c7ca9204056cb17c"
 dependencies = [
  "reqwest 0.12.26",
  "reqwest-middleware",
