@@ -28,6 +28,20 @@ serde = { workspace = true }
 hex = { workspace = true }
 
 [features]
-default = []
+default = ["rustls"]
+rustls = [
+  "sigstore-bundle/rustls",
+  "sigstore-rekor/rustls",
+  "sigstore-fulcio/rustls",
+  "sigstore-oidc/rustls",
+  "sigstore-tsa/rustls",
+]
+native-tls = [
+  "sigstore-bundle/native-tls",
+  "sigstore-rekor/native-tls",
+  "sigstore-fulcio/native-tls",
+  "sigstore-oidc/native-tls",
+  "sigstore-tsa/native-tls",
+]
 # Enable automatic browser opening for authentication
 browser = ["sigstore-oidc/browser"]

@@ -7,12 +7,17 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+default = ["rustls"]
+rustls = ["sigstore-tsa/rustls", "sigstore-rekor/rustls"]
+native-tls = ["sigstore-tsa/native-tls", "sigstore-rekor/native-tls"]
+
 [dependencies]
 sigstore-types = { workspace = true }
 sigstore-crypto = { workspace = true }
 sigstore-merkle = { workspace = true }
-sigstore-tsa = { workspace = true }
-sigstore-rekor = { workspace = true }
+sigstore-tsa = { workspace = true, default-features = false }
+sigstore-rekor = { workspace = true, default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

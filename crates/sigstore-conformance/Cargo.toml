@@ -12,6 +12,27 @@ publish = false
 name = "conformance"
 path = "src/main.rs"
 
+[features]
+default = ["rustls"]
+rustls = [
+  "sigstore-sign/rustls",
+  "sigstore-verify/rustls",
+  "sigstore-fulcio/rustls",
+  "sigstore-oidc/rustls",
+  "sigstore-rekor/rustls",
+  "sigstore-tsa/rustls",
+  "sigstore-bundle/rustls",
+]
+native-tls = [
+  "sigstore-sign/native-tls",
+  "sigstore-verify/native-tls",
+  "sigstore-fulcio/native-tls",
+  "sigstore-oidc/native-tls",
+  "sigstore-rekor/native-tls",
+  "sigstore-tsa/native-tls",
+  "sigstore-bundle/native-tls",
+]
+
 [dependencies]
 sigstore-sign = { workspace = true }
 sigstore-verify = { workspace = true }

@@ -46,6 +46,20 @@ jobs:
       - name: Run tests
         run: cargo test --all-features --workspace
 
+  check-native-tls:
+    name: Check Native TLS (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.89.0
+      - name: Run tests
+        shell: bash
+        run: ./scripts/check-native-tls.sh
+
   docs:
     name: Docs
     runs-on: ubuntu-latest
@@ -73,7 +87,7 @@ jobs:
           cargo build --release --package sigstore-conformance
           cargo build --release --example verify_bundle
 
-      - uses: sigstore/sigstore-conformance@main
+      - uses: sigstore/sigstore-conformance@f0128def929ba507c4d121b97f14b4043bd1bc92
         with:
           entrypoint: ./target/release/conformance
 

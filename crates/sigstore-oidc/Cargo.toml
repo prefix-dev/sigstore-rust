@@ -8,7 +8,9 @@ repository.workspace = true
 rust-version.workspace = true
 
 [features]
-default = []
+default = ["rustls"]
+rustls = ["reqwest/rustls", "ambient-id/rustls"]
+native-tls = ["reqwest/native-tls", "ambient-id/native-tls"]
 # Enable automatic browser opening for authentication
 browser = ["dep:open"]
 
@@ -17,10 +19,10 @@ sigstore-types = { workspace = true }
 sigstore-crypto = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-reqwest = { workspace = true, features = ["rustls-tls"] }
+reqwest = { workspace = true }
 url = { workspace = true }
 tokio = { workspace = true }
-ambient-id = "0.0.7"
+ambient-id = { workspace = true }
 thiserror = { workspace = true }
 base64 = { workspace = true }
 rand = { workspace = true }
