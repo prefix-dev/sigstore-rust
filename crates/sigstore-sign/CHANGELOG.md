@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2](https://github.com/prefix-dev/sigstore-rust/compare/sigstore-sign-v0.6.1...sigstore-sign-v0.6.2) - 2026-02-04
+
+### Other
+
+- add native-tls feature, bump reqwest ([#51](https://github.com/prefix-dev/sigstore-rust/pull/51))
+
 ## [0.6.1](https://github.com/prefix-dev/sigstore-rust/compare/sigstore-sign-v0.6.0...sigstore-sign-v0.6.1) - 2026-01-26
 
 ### Added
