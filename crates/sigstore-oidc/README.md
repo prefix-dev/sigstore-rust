@@ -16,6 +16,8 @@ This crate handles OIDC (OpenID Connect) authentication for Sigstore's keyless s
 
 ## Cargo Features
 
+- `rustls` (default) - Use rustls for TLS connections.
+- `native-tls` - Use the platform's native TLS implementation instead of rustls.
 - `browser` (default) - Enables automatic browser opening during authentication. Adds the `open` dependency. Without this feature, OOB (out-of-band) mode is used.
 
 ## Ambient credential detection
