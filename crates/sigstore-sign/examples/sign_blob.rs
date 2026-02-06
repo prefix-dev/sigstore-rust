@@ -6,7 +6,7 @@
 //!
 //! Sign a file (opens browser, or prompts for code if browser unavailable):
 //! ```sh
-//! cargo run -p sigstore-sign --features browser --example sign_blob -- artifact.txt -o artifact.sigstore.json
+//! cargo run -p sigstore-sign --example sign_blob -- artifact.txt -o artifact.sigstore.json
 //! ```
 //!
 //! Sign with an identity token (e.g., from GitHub Actions):

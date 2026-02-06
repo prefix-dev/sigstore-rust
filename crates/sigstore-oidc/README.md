@@ -16,7 +16,7 @@ This crate handles OIDC (OpenID Connect) authentication for Sigstore's keyless s
 
 ## Cargo Features
 
-- `browser` - Enables automatic browser opening during authentication. Adds the `open` dependency. Without this feature, OOB (out-of-band) mode is used.
+- `browser` (default) - Enables automatic browser opening during authentication. Adds the `open` dependency. Without this feature, OOB (out-of-band) mode is used.
 
 ## Ambient credential detection
 
@@ -35,10 +35,10 @@ The `sigstore-sign` crate provides end-to-end signing examples:
 
 ```sh
 # Sign a blob
-cargo run -p sigstore-sign --features browser --example sign_blob -- artifact.txt -o artifact.sigstore.json
+cargo run -p sigstore-sign --example sign_blob -- artifact.txt -o artifact.sigstore.json
 
 # Sign a conda package attestation
-cargo run -p sigstore-sign --features browser --example sign_attestation -- package.conda -o package.sigstore.json
+cargo run -p sigstore-sign --example sign_attestation -- package.conda -o package.sigstore.json
 ```
 
 The `sigstore-verify` crate provides verification examples:

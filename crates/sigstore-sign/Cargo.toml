@@ -28,7 +28,7 @@ serde = { workspace = true }
 hex = { workspace = true }
 
 [features]
-default = ["rustls"]
+default = ["rustls", "browser"]
 rustls = [
   "sigstore-bundle/rustls",
   "sigstore-rekor/rustls",
