@@ -17,7 +17,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.6.2"
+version = "0.6.3"
 edition = "2021"
 license = "BSD-3-Clause"
 repository = "https://github.com/prefix-dev/sigstore-rust"
@@ -95,15 +95,15 @@ directories = "6.0"
 open = "5.3"
 
 # Internal crates (path + version for publishing)
-sigstore-types = { path = "crates/sigstore-types", version = "0.6.2" }
-sigstore-crypto = { path = "crates/sigstore-crypto", version = "0.6.2" }
-sigstore-merkle = { path = "crates/sigstore-merkle", version = "0.6.2" }
-sigstore-tsa = { path = "crates/sigstore-tsa", version = "0.6.2", default-features = false }
-sigstore-trust-root = { path = "crates/sigstore-trust-root", version = "0.6.2" }
-sigstore-bundle = { path = "crates/sigstore-bundle", version = "0.6.2", default-features = false }
-sigstore-rekor = { path = "crates/sigstore-rekor", version = "0.6.2", default-features = false }
-sigstore-fulcio = { path = "crates/sigstore-fulcio", version = "0.6.2", default-features = false }
-sigstore-oidc = { path = "crates/sigstore-oidc", version = "0.6.2", default-features = false }
-sigstore-cache = { path = "crates/sigstore-cache", version = "0.6.2" }
-sigstore-verify = { path = "crates/sigstore-verify", version = "0.6.2", default-features = false }
-sigstore-sign = { path = "crates/sigstore-sign", version = "0.6.2", default-features = false }
+sigstore-types = { path = "crates/sigstore-types", version = "0.6.3" }
+sigstore-crypto = { path = "crates/sigstore-crypto", version = "0.6.3" }
+sigstore-merkle = { path = "crates/sigstore-merkle", version = "0.6.3" }
+sigstore-tsa = { path = "crates/sigstore-tsa", version = "0.6.3", default-features = false }
+sigstore-trust-root = { path = "crates/sigstore-trust-root", version = "0.6.3" }
+sigstore-bundle = { path = "crates/sigstore-bundle", version = "0.6.3", default-features = false }
+sigstore-rekor = { path = "crates/sigstore-rekor", version = "0.6.3", default-features = false }
+sigstore-fulcio = { path = "crates/sigstore-fulcio", version = "0.6.3", default-features = false }
+sigstore-oidc = { path = "crates/sigstore-oidc", version = "0.6.3", default-features = false }
+sigstore-cache = { path = "crates/sigstore-cache", version = "0.6.3" }
+sigstore-verify = { path = "crates/sigstore-verify", version = "0.6.3", default-features = false }
+sigstore-sign = { path = "crates/sigstore-sign", version = "0.6.3", default-features = false }
