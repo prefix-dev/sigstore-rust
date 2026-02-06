@@ -14,7 +14,7 @@ use sigstore_trust_root::SigningConfig as TufSigningConfig;
 use sigstore_tsa::TimestampClient;
 use sigstore_types::{
     Artifact, Bundle, DerCertificate, DsseEnvelope, DsseSignature, KeyId, PayloadBytes, Sha256Hash,
-    SignatureBytes, Subject, TimestampToken,
+    SignatureBytes, Statement, Subject, TimestampToken,
 };
 
 /// Configuration for signing operations
@@ -369,23 +369,34 @@ impl Signer {
     /// # }
     /// ```
     pub async fn sign_attestation(&self, attestation: Attestation) -> Result<Bundle> {
-        // 1. Generate ephemeral key pair
-        let key_pair = self.generate_ephemeral_keypair()?;
-
-        // 2. Get signing certificate from Fulcio
-        let leaf_cert_der = self.request_certificate(&key_pair).await?;
-
-        // 3. Build the in-toto statement
         let statement = attestation.build_statement();
-        let statement_json = serde_json::to_string(&statement)
+        let statement_json = serde_json::to_vec(&statement)
             .map_err(|e| Error::Signing(format!("Failed to serialize statement: {}", e)))?;
 
-        // 4. Create DSSE envelope and sign it
-        let payload_type = "application/vnd.in-toto+json".to_string();
-        let payload = PayloadBytes::from_bytes(statement_json.as_bytes());
+        self.sign_raw_statement(&statement_json).await
+    }
 
-        // Compute PAE and sign it
-        let pae = sigstore_types::pae(&payload_type, statement_json.as_bytes());
+    /// Sign a pre-existing raw in-toto statement
+    ///
+    /// This creates a DSSE bundle with the given statement bytes.
+    /// The given bytes are used as-is as the in-toto statement: caller is responsible
+    /// for the content of the statement.
+    pub async fn sign_raw_statement(&self, statement_bytes: &[u8]) -> Result<Bundle> {
+        // Generate ephemeral key, get a signing certificate for it
+        let key_pair = self.generate_ephemeral_keypair()?;
+        let leaf_cert_der = self.request_certificate(&key_pair).await?;
+
+        // validate that input is a valid statement
+        if serde_json::from_slice::<Statement>(statement_bytes).is_err() {
+            return Err(Error::Signing(
+                "Provided statement is not a valid in-toto Statement".to_string(),
+            ));
+        }
+
+        // Calculate PAE and sign it, create the DSSE envelope
+        let payload_type = "application/vnd.in-toto+json".to_string();
+        let payload = PayloadBytes::from_bytes(statement_bytes);
+        let pae = sigstore_types::pae(&payload_type, statement_bytes);
         let signature = key_pair.sign(&pae)?;
 
         let dsse_envelope = DsseEnvelope::new(
@@ -397,19 +408,19 @@ impl Signer {
             }],
         );
 
-        // 5. Create DSSE Rekor entry
+        // Create and submit DSSE Rekor entry
         let tlog_entry = self
             .create_dsse_rekor_entry(&dsse_envelope, &leaf_cert_der)
             .await?;
 
-        // 6. Get timestamp from TSA (optional)
+        // Get timestamp from TSA (optional)
         let timestamp = if let Some(tsa_url) = &self.tsa_url {
             Some(self.request_timestamp(tsa_url, &signature).await?)
         } else {
             None
         };
 
-        // 7. Build bundle with DSSE envelope
+        // Build bundle with DSSE envelope
         let mut bundle = BundleV03::with_certificate_and_dsse(leaf_cert_der, dsse_envelope)
             .with_tlog_entry(tlog_entry.build());
 
