@@ -7,7 +7,7 @@
 //!
 //! Sign a conda package (interactive OAuth flow):
 //! ```sh
-//! cargo run -p sigstore-sign --example sign_attestation -- \
+//! cargo run -p sigstore-sign --features browser --example sign_attestation -- \
 //!     package.conda -o package.sigstore.json
 //! ```
 //!
