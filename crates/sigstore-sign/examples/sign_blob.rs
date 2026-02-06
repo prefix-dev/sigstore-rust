@@ -4,7 +4,7 @@
 //!
 //! # Usage
 //!
-//! Sign a file (interactive OAuth flow):
+//! Sign a file (opens browser, or prompts for code if browser unavailable):
 //! ```sh
 //! cargo run -p sigstore-sign --example sign_blob -- artifact.txt -o artifact.sigstore.json
 //! ```
@@ -18,7 +18,7 @@
 //!
 //! Use Rekor V2 API (when available):
 //! ```sh
-//! cargo run -p sigstore-sign --example sign_blob -- --v2 artifact.txt
+//! cargo run -p sigstore-sign --features browser --example sign_blob -- --v2 artifact.txt
 //! ```
 //!
 //! # In GitHub Actions
@@ -247,22 +247,14 @@ async fn get_token(explicit_token: Option<String>) -> Result<IdentityToken, Stri
         return Ok(token);
     }
 
-    // 3. Fall back to interactive OAuth device code flow
+    // 3. Fall back to interactive OAuth
+    // This automatically opens browser if available, or prompts for manual code entry
     println!("  Starting interactive authentication...");
     println!();
 
-    get_identity_token(|response| {
-        println!("Please visit: {}", response.verification_uri);
-        if let Some(complete_uri) = &response.verification_uri_complete {
-            println!("Or open: {}", complete_uri);
-        }
-        println!();
-        println!("Enter code: {}", response.user_code);
-        println!();
-        println!("Waiting for authentication...");
-    })
-    .await
-    .map_err(|e| format!("OAuth failed: {}", e))
+    get_identity_token()
+        .await
+        .map_err(|e| format!("OAuth failed: {}", e))
 }
 
 fn print_usage(program: &str) {

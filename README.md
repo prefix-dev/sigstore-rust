@@ -80,6 +80,22 @@ let bundle_json = serde_json::to_string_pretty(&bundle)?;
 
 ## Examples
 
+### Sign and verify an artifact locally
+
+```bash
+# Sign the README.md file
+cargo run -p sigstore-sign --features browser --example sign_blob -- README.md -o README.md.sigstore.json
+
+# Verify with our tool
+cargo run -p sigstore-verify --example verify_bundle -- README.md README.md.sigstore.json
+
+# You can also verify with cosign
+cosign verify-blob --bundle README.md.sigstore.json \
+    --certificate-identity $INSERT_YOUR_EMAIL \
+    --certificate-oidc-issuer https://github.com/login/oauth \
+    README.md
+```
+
 ### Verify a Bundle from GitHub
 
 You can verify Sigstore bundles from GitHub releases:
@@ -98,22 +114,6 @@ cargo run -p sigstore-verify --example verify_bundle -- \
     --identity "keyless@projectsigstore.iam.gserviceaccount.com" \
     --issuer "https://accounts.google.com" \
     cosign_checksums.txt cosign_checksums.txt.sigstore.json
-```
-
-### Verify an artifact locally
-
-```bash
-# Sign the README.md file
-cargo run -p sigstore-sign --example sign_blob -- README.md -o README.md.sigstore.json
-
-# Verify with our tool
-cargo run -p sigstore-verify --example verify_bundle -- README.md README.md.sigstore.json
-
-# You can also verify with cosign
-cosign verify-blob --bundle README.md.sigstore.json \
-    --certificate-identity w.vollprecht@gmail.com \
-    --certificate-oidc-issuer https://github.com/login/oauth \
-    README.md
 ```
 
 ## Architecture
