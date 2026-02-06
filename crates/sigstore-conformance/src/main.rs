@@ -5,13 +5,9 @@
 //!
 //! This binary implements the conformance test protocol for Sigstore clients.
 
-use sigstore_bundle::{BundleV03, TlogEntryBuilder};
-use sigstore_crypto::KeyPair;
-use sigstore_fulcio::FulcioClient;
 use sigstore_oidc::IdentityToken;
-use sigstore_rekor::RekorClient;
-use sigstore_trust_root::{SigningConfig, TrustedRoot};
-use sigstore_tsa::TimestampClient;
+use sigstore_sign::{SigningConfig as SignerSigningConfig, SigningContext};
+use sigstore_trust_root::{SigningConfig as TufSigningConfig, TrustedRoot};
 use sigstore_types::{Bundle, Sha256Hash, SignatureContent};
 use sigstore_verify::{verify, VerificationPolicy};
 
@@ -111,89 +107,28 @@ async fn sign_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
         i += 1;
     }
 
-    let identity_token = identity_token.ok_or("Missing required --identity-token")?;
+    let identity_token_str = identity_token.ok_or("Missing required --identity-token")?;
     let bundle_path = bundle_path.ok_or("Missing required --bundle")?;
     let artifact_path = artifact_path.ok_or("Missing artifact path")?;
 
-    // Parse signing config to get URLs
     let signing_config = if let Some(config_path) = &_signing_config {
-        SigningConfig::from_file(config_path)?
+        let tuf_config = TufSigningConfig::from_file(config_path)?;
+        SignerSigningConfig::from_tuf_config(&tuf_config)
     } else if staging {
-        SigningConfig::staging()?
+        SignerSigningConfig::staging()
     } else {
-        SigningConfig::production()?
+        SignerSigningConfig::production()
     };
 
-    // Get the best endpoints from signing config
-    let fulcio_endpoint = signing_config
-        .get_fulcio_url()
-        .ok_or("No valid Fulcio CA found in signing config")?;
-    let fulcio_url = fulcio_endpoint.url.clone();
-
-    let rekor_endpoint = signing_config
-        .get_rekor_url(None) // Get highest available version
-        .ok_or("No valid Rekor tlog found in signing config")?;
-    let rekor_url = rekor_endpoint.url.clone();
-    let use_rekor_v2 = rekor_endpoint.major_api_version == 2;
-
-    let tsa_url = signing_config.get_tsa_url().map(|e| e.url.clone());
+    let context = SigningContext::with_config(signing_config);
+    let identity_token = IdentityToken::from_jwt(&identity_token_str)?;
+    let signer = context.signer(identity_token);
 
     // Read artifact
     let artifact_data = fs::read(&artifact_path)?;
 
-    // Parse identity token
-    let identity_token = IdentityToken::from_jwt(&identity_token)?;
-
-    // Generate ephemeral key pair
-    let key_pair = KeyPair::generate_ecdsa_p256()?;
-
-    // Get signing certificate from Fulcio
-    let fulcio_client = FulcioClient::new(&fulcio_url);
-    let cert_response = fulcio_client
-        .create_signing_certificate(&identity_token, &key_pair)
-        .await?;
-
-    // Get the leaf certificate (v0.3 bundles use single cert, not chain)
-    let leaf_cert = cert_response.leaf_certificate()?;
-
-    // Sign the artifact
-    let signature = key_pair.sign(&artifact_data)?;
-
-    // Compute artifact hash using sigstore-crypto
-    let artifact_hash = sigstore_crypto::sha256(&artifact_data);
-
-    // Upload to Rekor - both V1 and V2 APIs accept DerCertificate directly
-    let rekor = RekorClient::new(&rekor_url);
-    let log_entry = if use_rekor_v2 {
-        let hashed_rekord =
-            sigstore_rekor::HashedRekordV2::new(&artifact_hash, &signature, &leaf_cert);
-        rekor.create_entry_v2(hashed_rekord).await?
-    } else {
-        let hashed_rekord =
-            sigstore_rekor::HashedRekord::new(&artifact_hash, &signature, &leaf_cert);
-        rekor.create_entry(hashed_rekord).await?
-    };
-
-    // Build bundle using the from_log_entry helper
-    let kind_version = if use_rekor_v2 { "0.0.2" } else { "0.0.1" };
-    let tlog_entry =
-        TlogEntryBuilder::from_log_entry(&log_entry, "hashedrekord", kind_version).build();
-
-    let mut bundle =
-        BundleV03::with_certificate_and_signature(leaf_cert, signature.clone(), artifact_hash)
-            .with_tlog_entry(tlog_entry);
-
-    if let Some(tsa_url) = tsa_url {
-        eprintln!("Using TSA: {}", tsa_url);
-        let tsa_client = TimestampClient::new(tsa_url);
-
-        // Timestamp the signature
-        let timestamp = tsa_client.timestamp_signature(&signature).await?;
-
-        bundle = bundle.with_rfc3161_timestamp(timestamp);
-    }
-
-    let bundle = bundle.into_bundle();
+    // Sign and get bundle
+    let bundle = signer.sign(artifact_data.as_slice()).await?;
 
     // Write bundle
     let bundle_json = bundle.to_json_pretty()?;
