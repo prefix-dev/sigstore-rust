@@ -254,21 +254,14 @@ async fn get_token(explicit_token: Option<String>) -> Result<IdentityToken, Stri
         return Ok(token);
     }
 
+    // Fall back to interactive OAuth
+    // This automatically opens browser if available, or prompts for manual code entry
     println!("  Starting interactive authentication...");
     println!();
 
-    get_identity_token(|response| {
-        println!("Please visit: {}", response.verification_uri);
-        if let Some(complete_uri) = &response.verification_uri_complete {
-            println!("Or open: {}", complete_uri);
-        }
-        println!();
-        println!("Enter code: {}", response.user_code);
-        println!();
-        println!("Waiting for authentication...");
-    })
-    .await
-    .map_err(|e| format!("OAuth failed: {}", e))
+    get_identity_token()
+        .await
+        .map_err(|e| format!("OAuth failed: {}", e))
 }
 
 fn print_usage(program: &str) {

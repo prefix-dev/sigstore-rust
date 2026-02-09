@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3](https://github.com/prefix-dev/sigstore-rust/compare/sigstore-oidc-v0.6.2...sigstore-oidc-v0.6.3) - 2026-02-06
+
+### Added
+
+- add custom templates and automatic browser open for better interactive flow ([#48](https://github.com/prefix-dev/sigstore-rust/pull/48))
+
 ## [0.6.2](https://github.com/prefix-dev/sigstore-rust/compare/sigstore-oidc-v0.6.1...sigstore-oidc-v0.6.2) - 2026-02-04
 
 ### Other

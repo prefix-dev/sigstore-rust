@@ -28,7 +28,7 @@ serde = { workspace = true }
 hex = { workspace = true }
 
 [features]
-default = ["rustls"]
+default = ["rustls", "browser"]
 rustls = [
   "sigstore-bundle/rustls",
   "sigstore-rekor/rustls",
@@ -43,3 +43,5 @@ native-tls = [
   "sigstore-oidc/native-tls",
   "sigstore-tsa/native-tls",
 ]
+# Enable automatic browser opening for authentication
+browser = ["sigstore-oidc/browser"]
