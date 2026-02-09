@@ -6,7 +6,7 @@
 use crate::error::{Error, Result};
 use crate::token::IdentityToken;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use rand::Rng;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 
 /// OAuth configuration for a provider
