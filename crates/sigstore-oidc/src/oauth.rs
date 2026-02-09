@@ -13,7 +13,7 @@
 use crate::error::{Error, Result};
 use crate::token::IdentityToken;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use rand::Rng;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
 use std::time::Duration;
