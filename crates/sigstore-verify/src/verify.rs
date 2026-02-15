@@ -272,22 +272,36 @@ impl Verifier {
 
         // Verify against policy constraints
         if let Some(ref expected_identity) = policy.identity {
-            if let Some(ref actual_identity) = result.identity {
-                if actual_identity != expected_identity {
+            match &result.identity {
+                Some(actual_identity) if actual_identity == expected_identity => {}
+                Some(actual_identity) => {
                     return Err(Error::Verification(format!(
                         "identity mismatch: expected {}, got {}",
                         expected_identity, actual_identity
+                    )));
+                }
+                None => {
+                    return Err(Error::Verification(format!(
+                        "certificate is missing identity (SAN), but policy requires: {}",
+                        expected_identity
                     )));
                 }
             }
         }
 
         if let Some(ref expected_issuer) = policy.issuer {
-            if let Some(ref actual_issuer) = result.issuer {
-                if actual_issuer != expected_issuer {
+            match &result.issuer {
+                Some(actual_issuer) if actual_issuer == expected_issuer => {}
+                Some(actual_issuer) => {
                     return Err(Error::Verification(format!(
                         "issuer mismatch: expected {}, got {}",
                         expected_issuer, actual_issuer
+                    )));
+                }
+                None => {
+                    return Err(Error::Verification(format!(
+                        "certificate is missing issuer (Fulcio OID extension), but policy requires: {}",
+                        expected_issuer
                     )));
                 }
             }

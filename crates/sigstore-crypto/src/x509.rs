@@ -102,14 +102,15 @@ fn determine_signing_scheme(
             } else if curve_oid == SECP_384_R_1 {
                 return Ok(SigningScheme::EcdsaP384Sha384);
             } else {
-                // Unknown EC curve - default to P-256 for compatibility
-                tracing::warn!("Unknown EC curve OID: {}, defaulting to P-256", curve_oid);
-                return Ok(SigningScheme::EcdsaP256Sha256);
+                return Err(Error::InvalidCertificate(format!(
+                    "unsupported EC curve OID: {}",
+                    curve_oid
+                )));
             }
         } else {
-            // EC key missing curve parameters - default to P-256 for compatibility
-            tracing::warn!("EC key missing curve parameters, defaulting to P-256");
-            return Ok(SigningScheme::EcdsaP256Sha256);
+            return Err(Error::InvalidCertificate(
+                "EC key missing curve parameters".to_string(),
+            ));
         }
     } else if alg_oid == RSA_ENCRYPTION {
         // RSA key - default to RSA PKCS#1 SHA-256
@@ -119,12 +120,10 @@ fn determine_signing_scheme(
         return Ok(SigningScheme::Ed25519);
     }
 
-    // Unknown algorithm - default to P-256 for compatibility
-    tracing::warn!(
-        "Unknown public key algorithm OID: {}, defaulting to P-256",
+    Err(Error::InvalidCertificate(format!(
+        "unsupported public key algorithm OID: {}",
         alg_oid
-    );
-    Ok(SigningScheme::EcdsaP256Sha256)
+    )))
 }
 
 /// Extract identity from Subject Alternative Name (SAN) extension

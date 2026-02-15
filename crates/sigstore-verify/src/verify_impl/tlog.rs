@@ -6,7 +6,7 @@
 use crate::error::{Error, Result};
 use base64::Engine;
 use serde::Serialize;
-use sigstore_crypto::{verify_signature, Checkpoint, SigningScheme};
+use sigstore_crypto::{verify_signature_auto, Checkpoint};
 use sigstore_trust_root::TrustedRoot;
 use sigstore_types::bundle::InclusionProof;
 use sigstore_types::{Bundle, SignatureBytes, TransparencyLogEntry};
@@ -83,8 +83,6 @@ pub fn verify_checkpoint(
     inclusion_proof: &InclusionProof,
     trusted_root: &TrustedRoot,
 ) -> Result<()> {
-    use sigstore_crypto::verify_signature_auto;
-
     // Parse the checkpoint (signed note)
     let checkpoint = Checkpoint::from_text(checkpoint_envelope)
         .map_err(|e| Error::Verification(format!("Failed to parse checkpoint: {}", e)))?;
@@ -181,13 +179,10 @@ pub fn verify_set(entry: &TransparencyLogEntry, trusted_root: &TrustedRoot) -> R
     // Get signature bytes from signed timestamp
     let signature = SignatureBytes::new(promise.signed_entry_timestamp.as_bytes().to_vec());
 
-    verify_signature(
-        &log_key,
-        &canonical_json,
-        &signature,
-        SigningScheme::EcdsaP256Sha256,
-    )
-    .map_err(|e| Error::Verification(format!("SET verification failed: {}", e)))?;
+    // Use automatic key type detection from the SPKI structure,
+    // rather than hardcoding ECDSA P-256 (matches checkpoint verification behavior)
+    verify_signature_auto(&log_key, &signature, &canonical_json)
+        .map_err(|e| Error::Verification(format!("SET verification failed: {}", e)))?;
 
     Ok(())
 }
