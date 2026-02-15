@@ -432,7 +432,6 @@ pub const SIGSTORE_PRODUCTION_TRUSTED_ROOT: &str = include_str!("trusted_root.js
 /// This is the trusted root for Sigstore's staging/testing instance.
 pub const SIGSTORE_STAGING_TRUSTED_ROOT: &str = include_str!("trusted_root_staging.json");
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
