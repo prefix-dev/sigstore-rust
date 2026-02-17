@@ -131,14 +131,9 @@ pub fn verify_signature_auto(
     match detect_key_type(public_key) {
         KeyType::Ed25519 => verify_ed25519(public_key, signature, message),
         KeyType::EcdsaP256 => verify_ecdsa_p256(public_key, signature, message),
-        KeyType::Unknown => {
-            // Fallback: try both (maintains backwards compatibility)
-            tracing::debug!("Unknown key type, trying Ed25519 then ECDSA P-256");
-            if verify_ed25519(public_key, signature, message).is_ok() {
-                return Ok(());
-            }
-            verify_ecdsa_p256(public_key, signature, message)
-        }
+        KeyType::Unknown => Err(Error::Verification(
+            "unsupported or unrecognized public key type".to_string(),
+        )),
     }
 }
 
