@@ -19,7 +19,7 @@ members = [
 [workspace.package]
 version = "0.6.3"
 edition = "2021"
-license = "BSD-3-Clause"
+license = "Apache-2.0"
 repository = "https://github.com/prefix-dev/sigstore-rust"
 rust-version = "1.70"
 
