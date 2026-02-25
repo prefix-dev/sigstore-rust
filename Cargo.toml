@@ -41,7 +41,7 @@ rand_core = { version = "0.10.0" }
 rand = "0.10.0"
 
 # ASN.1 / X.509
-der = { version = "0.7", features = ["alloc", "derive", "oid"] }
+der = { version = "0.8", features = ["alloc", "derive", "oid"] }
 pem = { version = "3.0" }
 spki = { version = "0.7", features = ["alloc"] }
 # To upgrade `const-oid`, first `spki` needs to be upgraded
