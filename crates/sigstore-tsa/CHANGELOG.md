@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4](https://github.com/prefix-dev/sigstore-rust/compare/sigstore-tsa-v0.6.3...sigstore-tsa-v0.6.4) - 2026-02-26
+
+### Other
+
+- update rand requirement ([#64](https://github.com/prefix-dev/sigstore-rust/pull/64))
+
 ## [0.6.2](https://github.com/prefix-dev/sigstore-rust/compare/sigstore-tsa-v0.6.1...sigstore-tsa-v0.6.2) - 2026-02-04
 
 ### Other
