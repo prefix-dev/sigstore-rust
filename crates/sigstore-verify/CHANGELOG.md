@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4](https://github.com/prefix-dev/sigstore-rust/compare/sigstore-verify-v0.6.3...sigstore-verify-v0.6.4) - 2026-02-26
+
+### Fixed
+
+- be more strict about unknown key types and verification ([#70](https://github.com/prefix-dev/sigstore-rust/pull/70))
+
 ## [0.6.2](https://github.com/prefix-dev/sigstore-rust/compare/sigstore-verify-v0.6.1...sigstore-verify-v0.6.2) - 2026-02-04
 
 ### Other
