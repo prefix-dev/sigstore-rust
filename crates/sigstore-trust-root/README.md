@@ -9,10 +9,11 @@ This crate handles parsing and management of Sigstore trusted root bundles. The 
 ## Features
 
 - **Trusted root parsing**: Load and parse `trusted_root.json` files
-- **Embedded roots**: Built-in production and staging trust anchors
-- **TUF support**: Optional secure fetching via The Update Framework (requires `tuf` feature)
+- **TUF support**: Secure fetching via The Update Framework (enabled by default)
+- **Embedded roots**: Built-in production and staging trust anchors for offline use
 - **Key extraction**: Extract public keys and certificates for verification
 - **Validity periods**: Time-based key and certificate validity checking
+- **Custom TUF repos**: Support for custom TUF repository URLs
 
 ## Trust Anchors
 
@@ -26,22 +27,41 @@ This crate handles parsing and management of Sigstore trusted root bundles. The 
 ## Usage
 
 ```rust
-use sigstore_trust_root::TrustedRoot;
+use sigstore_trust_root::{TrustedRoot, SIGSTORE_PRODUCTION_TRUSTED_ROOT};
 
-// Use embedded production root
-let root = TrustedRoot::production()?;
+// Fetch via TUF (recommended - ensures up-to-date trust material)
+let root = TrustedRoot::production().await?;
+
+// Use embedded data (for offline use)
+let root = TrustedRoot::from_json(SIGSTORE_PRODUCTION_TRUSTED_ROOT)?;
 
 // Load from file
 let root = TrustedRoot::from_file("trusted_root.json")?;
+```
 
-// With TUF feature: fetch securely
-#[cfg(feature = "tuf")]
-let root = TrustedRoot::from_tuf().await?;
+### Custom TUF Repository
+
+```rust
+use sigstore_trust_root::{TrustedRoot, TufConfig};
+
+// Fetch from a custom TUF repository (e.g., for testing)
+let config = TufConfig::custom(
+    "https://sigstore.github.io/root-signing/",
+    include_bytes!("path/to/root.json"),
+);
+let root = TrustedRoot::from_tuf(config).await?;
 ```
 
 ## Cargo Features
 
-- `tuf` - Enable TUF-based secure fetching of trusted roots
+- `tuf` (default) - Enable TUF-based secure fetching of trusted roots
+
+To opt out of TUF support:
+
+```toml
+[dependencies]
+sigstore-trust-root = { version = "0.1", default-features = false }
+```
 
 ## Related Crates
 

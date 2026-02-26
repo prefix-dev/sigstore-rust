@@ -10,7 +10,10 @@ use sigstore_oidc::IdentityToken;
 use sigstore_rekor::{
     DsseEntry, DsseEntryV2, HashedRekord, HashedRekordV2, RekorApiVersion, RekorClient,
 };
-use sigstore_trust_root::SigningConfig as TufSigningConfig;
+use sigstore_trust_root::{
+    SigningConfig as TufSigningConfig, SIGSTORE_PRODUCTION_SIGNING_CONFIG,
+    SIGSTORE_STAGING_SIGNING_CONFIG,
+};
 use sigstore_tsa::TimestampClient;
 use sigstore_types::{
     Artifact, Bundle, DerCertificate, DsseEnvelope, DsseSignature, KeyId, PayloadBytes, Sha256Hash,
@@ -49,15 +52,23 @@ impl SigningConfig {
     /// Create configuration for Sigstore public-good instance
     ///
     /// This uses the embedded signing config to get the best available endpoints.
+    /// For the most up-to-date endpoints, use `from_tuf_config()` with a TUF-fetched config.
     pub fn production() -> Self {
-        Self::from_tuf_config(&TufSigningConfig::production().expect("embedded config is valid"))
+        Self::from_tuf_config(
+            &TufSigningConfig::from_json(SIGSTORE_PRODUCTION_SIGNING_CONFIG)
+                .expect("embedded config is valid"),
+        )
     }
 
     /// Create configuration for Sigstore staging instance
     ///
     /// This uses the embedded signing config to get the best available endpoints.
+    /// For the most up-to-date endpoints, use `from_tuf_config()` with a TUF-fetched config.
     pub fn staging() -> Self {
-        Self::from_tuf_config(&TufSigningConfig::staging().expect("embedded config is valid"))
+        Self::from_tuf_config(
+            &TufSigningConfig::from_json(SIGSTORE_STAGING_SIGNING_CONFIG)
+                .expect("embedded config is valid"),
+        )
     }
 
     /// Create configuration from a TUF signing config

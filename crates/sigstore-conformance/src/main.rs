@@ -7,7 +7,7 @@
 
 use sigstore_oidc::IdentityToken;
 use sigstore_sign::{SigningConfig as SignerSigningConfig, SigningContext};
-use sigstore_trust_root::{SigningConfig as TufSigningConfig, TrustedRoot};
+use sigstore_trust_root::{SigningConfig as TufSigningConfig, TrustedRoot, SIGSTORE_PRODUCTION_TRUSTED_ROOT};
 use sigstore_types::{Bundle, Sha256Hash, SignatureContent};
 use sigstore_verify::{verify, VerificationPolicy};
 
@@ -224,8 +224,9 @@ fn verify_bundle(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let trusted_root = if let Some(root_path) = trusted_root_path {
         TrustedRoot::from_file(&root_path)?
     } else {
-        // Default to production trusted root when not specified
-        TrustedRoot::production()?
+        // Default to embedded production trusted root when not specified
+        // For better freshness, use TrustedRoot::production().await in async contexts
+        TrustedRoot::from_json(SIGSTORE_PRODUCTION_TRUSTED_ROOT)?
     };
 
     // Load bundle

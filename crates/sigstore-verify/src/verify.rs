@@ -175,8 +175,9 @@ impl Verifier {
     /// use sigstore_trust_root::TrustedRoot;
     /// use sigstore_types::{Artifact, Bundle, Sha256Hash};
     ///
-    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let trusted_root = TrustedRoot::production()?;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// // Fetch trusted root via TUF (recommended)
+    /// let trusted_root = TrustedRoot::production().await?;
     /// let verifier = Verifier::new(&trusted_root);
     /// let bundle: Bundle = todo!();
     /// let policy = VerificationPolicy::default();
